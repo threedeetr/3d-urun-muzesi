@@ -4,6 +4,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { Worker } = require('node:worker_threads');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -39,7 +40,7 @@ function loadProducts() {
 function saveProducts(rows) {
   const tmp = DB + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(rows, null, 2)); fs.renameSync(tmp, DB);
 }
-const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.svg':'image/svg+xml', '.3mf':'model/3mf', '.glb':'model/gltf-binary', '.stl':'model/stl' };
+const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.svg':'image/svg+xml', '.3mf':'model/3mf', '.glb':'model/gltf-binary', '.stl':'model/stl', '.webp':'image/webp', '.ogg':'audio/ogg' };
 function reply(res, code, payload, headers={}) {
   const isJson = typeof payload !== 'string' && !Buffer.isBuffer(payload);
   const body = isJson ? Buffer.from(JSON.stringify(payload)) : payload;
@@ -114,12 +115,53 @@ function saveUpload(file){
   if(file.buffer.length > MAX_FILE)throw Object.assign(new Error('Maksimum dosya boyutu 32 MB.'),{status:413});
   if(ext==='.3mf' && file.buffer.subarray(0,2).toString()!=='PK')throw Object.assign(new Error('3MF dosyası geçerli görünmüyor.'),{status:400});
   if(ext==='.glb' && file.buffer.subarray(0,4).toString()!=='glTF')throw Object.assign(new Error('GLB dosyası geçerli görünmüyor.'),{status:400});
-  const name=crypto.randomUUID()+ext;fs.writeFileSync(path.join(UPLOADS,name),file.buffer,{flag:'wx'});
-  return {modelUrl:'/uploads/'+name,format:ext.slice(1)};
+  const name=crypto.randomUUID()+ext;
+  fs.writeFileSync(path.join(UPLOADS,name),file.buffer,{flag:'wx'});
+  return {modelUrl:'/uploads/'+name,format:ext.slice(1),size:file.buffer.length};
 }
-function removeUpload(product){
- if(product?.modelUrl?.startsWith('/uploads/')){const name=path.basename(product.modelUrl);try{fs.unlinkSync(path.join(UPLOADS,name));}catch{}}
+function safeDeleteUrl(url){
+ if(typeof url==='string' && /^\/uploads\/[a-f0-9-]{36}\.(3mf|glb|stl)$/i.test(url)){
+  try{fs.unlinkSync(path.join(UPLOADS,path.basename(url)))}catch{}
+ }
 }
+function removeUpload(product){safeDeleteUrl(product?.modelUrl);safeDeleteUrl(product?.previewUrl);}
+function runPreviewWorker(source,target,format){return new Promise((resolve,reject)=>{
+ const worker=new Worker(path.join(ROOT,'model-preview-worker.js'),{
+   workerData:{source,target,format},resourceLimits:{maxOldGenerationSizeMb:256,maxYoungGenerationSizeMb:32}
+ });
+ let finished=false;
+ const timer=setTimeout(()=>{if(finished)return;finished=true;worker.terminate();reject(new Error('Önizleme dönüştürmesi zaman aşımına uğradı.'))},22000);
+ const finish=(err,result)=>{if(finished)return;finished=true;clearTimeout(timer);worker.terminate();if(err)reject(err);else resolve(result)};
+ worker.on('message',msg=>msg.ok?finish(null,msg):finish(new Error(msg.error||'Önizleme oluşturulamadı.')));
+ worker.on('error',err=>finish(err));
+ worker.on('exit',code=>{if(!finished)finish(new Error('Önizleme işçisi kapandı: '+code))});
+ });}
+async function preparePreview(upload){
+ if(!upload)return {};
+ if(upload.format==='glb'){
+  return upload.size<=6*1024*1024 ? {previewUrl:upload.modelUrl} : {previewError:'GLB dosyası mobil önizleme için büyük. 6 MB altında optimize GLB yükleyin.'};
+ }
+ const filename=crypto.randomUUID()+'.glb',target=path.join(UPLOADS,filename);
+ try{
+  const result=await runPreviewWorker(path.join(UPLOADS,path.basename(upload.modelUrl)),target,upload.format);
+  return {previewUrl:'/uploads/'+filename,previewTriangles:result.triangles};
+ }catch(err){
+  console.warn('Önizleme oluşturulamadı:',err.message);try{fs.unlinkSync(target)}catch{}
+  return {previewError:'3D önizleme oluşturulamadı. Daha küçük/onarılmış bir 3MF veya optimize GLB deneyin.'};
+ }
+}
+// Kalıcı diski olan mevcut kurulumlarda eski ürünler de otomatik önizlemeye kavuşsun.
+async function backfillPreviews(){
+ const rows=loadProducts();
+ for(const original of rows){
+  if(!original.modelUrl || original.previewUrl || original.previewError || !['3mf','stl'].includes(original.format))continue;
+  if(!fs.existsSync(path.join(UPLOADS,path.basename(original.modelUrl))))continue;
+  const prepared=await preparePreview({...original,size:fs.statSync(path.join(UPLOADS,path.basename(original.modelUrl))).size});
+  const fresh=loadProducts(),index=fresh.findIndex(p=>p.id===original.id);
+  if(index>=0&&fresh[index].modelUrl===original.modelUrl){Object.assign(fresh[index],prepared);saveProducts(fresh)}
+ }
+}
+
 function validOrigin(req){
  const o=req.headers.origin;if(!o)return true;
  try{return new URL(o).host===req.headers.host;}catch{return false;}
@@ -155,6 +197,7 @@ async function handle(req,res){
      const upload=saveUpload(form.file);let row;
      try{row=sanitize(data,{id:crypto.randomUUID(),modelUrl:upload?.modelUrl||null,format:upload?.format||null,isDemo:!upload,createdAt:new Date().toISOString()});}
      catch(err){if(upload)removeUpload(upload);throw err;}
+     if(upload)Object.assign(row,await preparePreview(upload));
      const rows=loadProducts();rows.unshift(row);saveProducts(rows);return reply(res,201,row);
    }
    const match=/^\/api\/admin\/products\/([a-zA-Z0-9-]+)$/.exec(pathname);
@@ -166,7 +209,7 @@ async function handle(req,res){
        let data;try{data=JSON.parse(form.fields.payload||'{}');}catch{throw Object.assign(new Error('Form bilgisi okunamadı.'),{status:400});}
        const cleaned=sanitize(data,rows[idx]);
        const upload=saveUpload(form.file);
-       if(upload){const old=rows[idx];Object.assign(cleaned,upload,{isDemo:false});rows[idx]=cleaned;saveProducts(rows);removeUpload(old);}
+       if(upload){const old=rows[idx];const preview=await preparePreview(upload);Object.assign(cleaned,{modelUrl:upload.modelUrl,format:upload.format,...preview,isDemo:false});rows[idx]=cleaned;saveProducts(rows);removeUpload(old);}
        else{rows[idx]=cleaned;saveProducts(rows);}
        return reply(res,200,rows[idx]);
      }
@@ -179,7 +222,7 @@ async function handle(req,res){
    if(!/^[a-f0-9-]{36}\.(3mf|glb|stl)$/i.test(name))return reply(res,404,{error:'Dosya bulunamadı.'});
    return serveFile(res,path.join(UPLOADS,name),true);
  }
- const routes={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/style.css':'style.css','/museum.js':'museum.js','/admin.js':'admin.js','/favicon.svg':'favicon.svg'};
+ const routes={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/style.css':'style.css','/museum.js':'museum.js','/admin.js':'admin.js','/favicon.svg':'favicon.svg','/threedee-logo.webp':'threedee-logo.webp','/classical.ogg':'classical.ogg'};
  if(routes[pathname])return serveFile(res,path.join(PUBLIC,routes[pathname]));
  return reply(res,404,{error:'Sayfa bulunamadı.'});
 }
@@ -187,6 +230,7 @@ const server=http.createServer((req,res)=>{Promise.resolve(handle(req,res)).catc
  console.error(e);if(!res.headersSent)reply(res,e.status||500,{error:e.status?e.message:'Sunucu hatası oluştu.'});
 });});
 server.listen(PORT,'0.0.0.0',()=>{
+ setImmediate(()=>backfillPreviews().catch(err=>console.warn('Önizleme geçişi:',err.message)));
  console.log(`3D Müze: http://localhost:${PORT}`);
  if(!process.env.ADMIN_PASSWORD){console.log('\n=======================================================');console.log('GECICI ADMIN ŞİFRESİ:',PASSWORD);console.log('Kalıcı kullanım için ADMIN_PASSWORD ortam değişkenini ayarlayın.');console.log('=======================================================\n');}
 });
