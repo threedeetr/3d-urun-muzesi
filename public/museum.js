@@ -131,11 +131,16 @@ function setEnvironment(){
  surfaceFrame(-13.55,4.2,-9,3.8,2.2,Math.PI/2,'KOLEKSİYON','KENDİNE ÖZGÜ PARÇALAR');
  surfaceFrame(13.55,4.2,-9,3.8,2.2,-Math.PI/2,'3D ATÖLYESİ','ÜRETİMDEN SERGİYE');
  makeOverheadSign('THREEDEE','SANAL TASARIM MÜZESİ',12.5);
- surfaceFrame(0,4.55,backZ+.35,8,2.9,0,'YENİ NESİL MÜZE','GERÇEK MODELLER • KENDİ TARZIN');
- // Marka logosu sergi bitiminde tek, net bir görsel olarak konumlanır.
- const logoTexture=new THREE.TextureLoader().load('/threedee-logo.webp');logoTexture.colorSpace=THREE.SRGBColorSpace;
- const brandSign=new THREE.Mesh(new THREE.PlaneGeometry(4.2,2.6),new THREE.MeshBasicMaterial({map:logoTexture}));
- brandSign.position.set(0,4.45,backZ+.51);scene.add(brandSign);
+ // Arka duvarda kullanıcının kendi ThreeDee bannerı (orijinal 1536 × 640 oranında).
+ // Önceki pano ve logo kaldırıldı: aynı derinlikte üst üste binip titremesin.
+ const bannerWidth=12.24,bannerHeight=bannerWidth*640/1536,bannerY=4.43;
+ box(bannerWidth+.38,bannerHeight+.38,.16,material(0x9d9d97,.58,.4),0,bannerY,backZ+.33);
+ box(bannerWidth+.12,bannerHeight+.12,.08,material(0x080a0c),0,bannerY,backZ+.44);
+ const bannerTexture=new THREE.TextureLoader().load('/threedee-banner.jpg');
+ bannerTexture.colorSpace=THREE.SRGBColorSpace;
+ bannerTexture.anisotropy=mobile?2:4;
+ const banner=new THREE.Mesh(new THREE.PlaneGeometry(bannerWidth,bannerHeight),new THREE.MeshBasicMaterial({map:bannerTexture,toneMapped:false}));
+ banner.position.set(0,bannerY,backZ+.50);scene.add(banner);
  buildReception();buildDigitalExhibit();
  scene.add(new THREE.HemisphereLight(0xe3f5fb,0x20292a,mobile?2.45:2.65));
  const sun=new THREE.DirectionalLight(0xffeed9,mobile?2.15:2.7);sun.position.set(3.8,11,13);scene.add(sun);

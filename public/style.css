@@ -263,3 +263,37 @@
 @media(max-height:550px){.chat-toggle{bottom:12px}.chat-panel{bottom:65px;height:calc(100dvh - 82px);min-height:150px}}
 @media(prefers-reduced-motion:reduce){.chat-toggle,.chat-panel{animation:none;transition:none}}
 .admin-chat-row{background:#faf9f5;border:1px solid #ded5c4;border-radius:9px;padding:13px;margin:9px 0}.admin-chat-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.admin-chat-head small{color:#827764;font-size:10px}.admin-chat-row p{overflow-wrap:anywhere;font-size:12px;line-height:1.55;color:#3e4c45;margin:10px 0}.admin-chat-actions{display:flex;gap:9px;flex-wrap:wrap}.admin-chat-actions button{padding:9px 12px;border:1px solid #c9bda8;border-radius:7px;background:#ede9dd;color:#4d3c30;font-size:11px}.admin-chat-actions button:last-child{border-color:#d9aa95;color:#933d33}
+
+/* ThreeDee | V7.1 telefon ekranı hizalama düzeltmesi.
+   Mevcut V6/V7 stillerinin SONUNDA: daha eski mobil kuralların üstüne çıkar. */
+.chat-toggle-icon{display:block;width:20px;height:20px;min-width:20px;flex-shrink:0;color:currentColor;stroke-width:2.25}
+@media (max-width:850px){
+  /* Müzik / girişe dön / tam ekran: iki satırlı menünün altına indir. */
+  .museum-bottom{top:124px;bottom:auto;left:auto;right:9px;padding:0 5px;justify-content:flex-end;background:transparent;z-index:5}
+  .museum-tools{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:nowrap}
+  .museum-tools .round-text-btn{min-height:36px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;padding:7px 10px}
+  /* Kılavuz metni joystick ve sağdaki eylemlerden uzak tut. */
+  .floor-hint{bottom:max(246px,calc(env(safe-area-inset-bottom) + 235px));max-width:min(78vw,320px);font-size:10px;line-height:1.45;padding:10px 13px;z-index:6}
+  /* Sohbet butonu yukarı alınır: 'Vitrine yaklaş' butonuyla üst üste gelmez. */
+  .chat-toggle{bottom:max(163px,calc(env(safe-area-inset-bottom) + 152px));right:16px;min-height:45px;gap:9px;padding:11px 16px;z-index:19}
+  .chat-panel{bottom:max(223px,calc(env(safe-area-inset-bottom) + 209px));height:min(510px,calc(100dvh - 250px))}
+}
+@media (max-width:420px){
+  /* Önceki @media <=395 sözde öğeleri ile HTML içi simgeler iki kez çıkıyordu. */
+  .museum-top .rooms-top-btn::before,
+  .museum-top .guestbook-top-btn::before{content:none!important;display:none!important}
+  .museum-top .rooms-top-btn,
+  .museum-top .guestbook-top-btn{font-size:10px!important;padding:8px 9px!important;white-space:nowrap}
+}
+@media (max-width:350px){
+  .museum-bottom{top:143px}
+  .museum-tools .round-text-btn{min-height:34px;padding:6px 8px}
+  .floor-hint{bottom:max(252px,calc(env(safe-area-inset-bottom) + 235px))}
+}
+@media (max-width:850px) and (max-height:560px){
+  /* Yatay telefon ekranlarında oyun kontrollerini erişilebilir bırak. */
+  .museum-bottom{top:90px}
+  .floor-hint{bottom:106px;max-width:54vw}
+  .chat-toggle{bottom:62px}
+  .chat-panel{bottom:110px;height:calc(100dvh - 126px);min-height:170px}
+}
