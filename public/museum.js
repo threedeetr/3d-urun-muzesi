@@ -10,10 +10,11 @@ const colors = { gold: 0xbfa477, dark: 0x212a27, wall: 0x45524d, floor: 0x67675c
 const models = new Map();
 const MAX_VISIBLE_PREVIEWS = mobile ? 2 : 4;
 let proximityRefresh = 0;
-let products=[], scene, camera, renderer, clock, museumObjects=[], stands=[], colliders=[], nearest=null;
+let products=[], scene, camera, renderer, clock, museumObjects=[], stands=[], colliders=[], nearest=null, nearestGuestbook=false, guestbookStand=null;
 let backZ=-21, galleryLength=42, galleryCenter=0;
 let viewerRenderer, viewerScene, viewerCamera, viewerControl, viewerContent, viewerFrame=0, currentProduct=null;
-let active=false, modalOpen=false, catalogOpen=false, yaw=0, pitch=0, touchJoy={x:0,y:0}, isMoving=false;
+let active=false, modalOpen=false, catalogOpen=false, guestbookOpen=false, yaw=0, pitch=0, touchJoy={x:0,y:0}, isMoving=false;
+let reviewPage=1,bookPage=1,chosenRating=0,photoIndex=0,photoMode=false,reviewTicket=0,guestTicket=0;
 const keys=new Set();
 const raycaster = new THREE.Raycaster();
 const HANDLED = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowRight','ArrowDown','KeyE','Space']);
@@ -136,6 +137,20 @@ function buildStands(){
   colliders.push({x:pos.x,z:pos.z,r:1.45});
  }
 }
+function buildGuestbookStand(){
+ // Ziyaretçi defteri girişten birkaç adım içeride, diğer ürünlerden bağımsızdır.
+ const x=3.65,z=15.15;const group=new THREE.Group();group.position.set(x,0,z);scene.add(group);
+ const wood=material(0x584232,.2,.65),gold=material(0xc6a46b,.6,.3),paper=material(0xece0bf,0,.85);
+ const foot=cyl(.66,.74,.21,wood,0,.11,0,group,8);
+ cyl(.19,.25,1.3,wood,0,.82,0,group,8);
+ const top=box(1.85,.12,1.15,wood,0,1.55,0,group);top.rotation.x=-.22;
+ const book=new THREE.Group();book.position.set(0,1.65,.04);book.rotation.x=-.22;group.add(book);
+ box(1.3,.08,.85,gold,0,0,0,book);box(1.2,.09,.77,paper,0,.078,0,book);
+ box(.025,.085,.74,wood,0,.126,0,book);box(.44,.015,.025,gold,-.3,.135,.1,book);box(.44,.015,.025,gold,.3,.135,.1,book);
+ const plaque=new THREE.Mesh(new THREE.PlaneGeometry(2.4,.97),new THREE.MeshBasicMaterial({map:txtCanvas('ZİYARETÇİ DEFTERİ','DOKUN & YORUM YAZ',650,350,'item')}));
+ plaque.position.set(0,2.75,.03);group.add(plaque);
+ group.userData.guestbook=true;colliders.push({x,z,r:1.0});guestbookStand={x,z,group};
+}
 function demoModel(p){
  const group=new THREE.Group(), color=material(p.color||'#bba78b',.16,.45),alt=material(0xd8cdb8,.15,.56),black=material(0x272b2a,.1,.65),pink=material(0xd5a9a7,.1,.54);
  switch(p.shape){
@@ -223,7 +238,7 @@ async function loadDisplay(p){
 }
 // Galeri içinde yalnızca yakındaki modeller yüklenir. Uzaklaşınca gölge/siluet geri gelir.
 function refreshNearbyModels(dt){
- if(!active||modalOpen||catalogOpen)return;
+ if(!active||modalOpen||catalogOpen||guestbookOpen)return;
  proximityRefresh+=dt;if(proximityRefresh<.8)return;proximityRefresh=0;
  const near=stands.filter(s=>s.p.modelUrl&&s.p.previewUrl).map(s=>({s,d:Math.hypot(camera.position.x-s.pos.x,camera.position.z-s.pos.z)})).sort((a,b)=>a.d-b.d);
  const visible=new Set(near.filter(x=>x.d<12).slice(0,MAX_VISIBLE_PREVIEWS).map(x=>x.s));
@@ -250,14 +265,15 @@ function renderCatalog(){
  products.forEach((p,i)=>{
   const btn=document.createElement('button');btn.className='catalog-row';btn.type='button';
   const number=document.createElement('span');number.className='catalog-number';number.textContent=String(i+1).padStart(2,'0');
-  const swatch=document.createElement('span');swatch.className='catalog-swatch';swatch.style.color=p.color;swatch.textContent=icons[p.shape]||'◈';
+  const swatch=document.createElement('span');swatch.className='catalog-swatch';swatch.style.color=p.color;
+  if(p.photos?.length){const img=document.createElement('img');img.src=p.photos[0];img.alt='';img.loading='lazy';swatch.append(img)}else swatch.textContent=icons[p.shape]||'◈';
   const data=document.createElement('span');data.className='catalog-data';
   const strong=document.createElement('strong');strong.textContent=p.name;
-  const small=document.createElement('small');small.textContent=`${money(p.price)}  ·  ${p.isDemo?'ÖRNEK MODEL':'3D MODEL'}`;
+  const small=document.createElement('small');small.textContent=`${money(p.price)}  ·  ${p.rating?.count?`★ ${p.rating.average} (${p.rating.count})`:p.isDemo?'ÖRNEK MODEL':'3D MODEL'}`;
   const arrow=document.createElement('span');arrow.className='catalog-arrow';arrow.textContent='↗';data.append(strong,small);btn.append(number,swatch,data,arrow);btn.addEventListener('click',()=>openProduct(p));list.append(btn);
  });
 }
-function setShade(){const show=catalogOpen||modalOpen;$('shade').hidden=!show;}
+function setShade(){const show=catalogOpen||modalOpen||guestbookOpen;$('shade').hidden=!show;}
 function openCatalog(){if(modalOpen)return;catalogOpen=true;$('catalogDrawer').classList.add('open');$('catalogDrawer').setAttribute('aria-hidden','false');setShade()}
 function closeCatalog(){catalogOpen=false;$('catalogDrawer').classList.remove('open');$('catalogDrawer').setAttribute('aria-hidden','true');setShade()}
 function fitViewer(){if(!viewerRenderer||!$('productViewer').clientWidth)return;const el=$('productViewer');const w=el.clientWidth,h=el.clientHeight;viewerRenderer.setSize(w,h,false);viewerCamera.aspect=w/h;viewerCamera.updateProjectionMatrix()}
@@ -278,13 +294,14 @@ function initViewer(){
  const stage=cyl(.98,1.1,.22,material(0xb3a187,.18,.5),0,.13,0,viewerScene,44);
  const ring=cyl(1.03,1.02,.06,material(0xc9aa6e,.7,.25),0,.24,0,viewerScene,44);
  fitViewer();
- const loop=()=>{viewerFrame=requestAnimationFrame(loop);if(!modalOpen)return;viewerControl.update();viewerRenderer.render(viewerScene,viewerCamera)};loop();
+ const loop=()=>{viewerFrame=requestAnimationFrame(loop);if(!modalOpen||photoMode)return;viewerControl.update();viewerRenderer.render(viewerScene,viewerCamera)};loop();
 }
 let loadTicket=0;
 async function openProduct(p){
  if(!p)return;
- closeCatalog();modalOpen=true;currentProduct=p;setShade();
+ closeCatalog();modalOpen=true;currentProduct=p;touchJoy={x:0,y:0};$('joyKnob').style.transform='';setShade();
  $('productModal').classList.add('open');$('productModal').setAttribute('aria-hidden','false');
+ renderProductPhotos(p);selectViewerMode(false);resetRating();loadProductReviews(p,true);
  $('productIndex').textContent=String(products.findIndex(x=>x.id===p.id)+1).padStart(2,'0');
  $('productName').textContent=p.name;$('productPrice').textContent=money(p.price);$('productDescription').textContent=p.description||'Bu ürün için henüz açıklama eklenmedi.';
  $('productStock').textContent=p.stock?`Stokta ${p.stock} adet mevcut`:'Şu an stokta yok';$('stockDot').classList.toggle('empty',!p.stock);
@@ -296,7 +313,82 @@ async function openProduct(p){
  try{const obj=await loadDisplay(p);if(ticket!==loadTicket)return;obj.position.y=.31;viewerContent.add(obj);$('viewerLoading').hidden=true;}
  catch(err){console.warn(err);if(ticket!==loadTicket)return;viewerContent.add(normalized(demoModel({...p,shape:'abstract'})));$('viewerLoading').textContent='Model açılmadı, temsili görünüm gösteriliyor.';}
 }
-function closeProduct(){loadTicket++;modalOpen=false;currentProduct=null;$('productModal').classList.remove('open');$('productModal').setAttribute('aria-hidden','true');setShade()}
+function closeProduct(){loadTicket++;reviewTicket++;modalOpen=false;currentProduct=null;$('productModal').classList.remove('open');$('productModal').setAttribute('aria-hidden','true');setShade()}
+function selectViewerMode(photos){
+ photoMode=!!photos && !!currentProduct?.photos?.length;
+ $('productPhotoStage').hidden=!photoMode;$('productViewer').hidden=photoMode;
+ $('viewerLoading').hidden=photoMode||$('viewerLoading').hidden;
+ $('viewerStamp').hidden=photoMode;$('mode3d').classList.toggle('selected',!photoMode);$('modePhotos').classList.toggle('selected',photoMode);
+ $('productModal').classList.toggle('showing-photos',photoMode);
+ if(!photoMode){fitViewer();if(viewerControl)viewerControl.update()}
+}
+function viewPhoto(i){
+ const pics=currentProduct?.photos||[];if(!pics.length)return;
+ photoIndex=Math.max(0,Math.min(i,pics.length-1));$('productBigPhoto').src=pics[photoIndex];
+ for(const [index,btn] of [...$('productPhotoThumbs').children].entries())btn.classList.toggle('active',index===photoIndex);
+ selectViewerMode(true);
+}
+function renderProductPhotos(p){
+ const pics=p.photos||[];$('modePhotos').hidden=!pics.length;$('productPhotoSection').hidden=!pics.length;
+ $('productPhotoStrip').replaceChildren();$('productPhotoThumbs').replaceChildren();
+ for(const [i,url] of pics.entries()){
+  const make=(cls)=>{const btn=document.createElement('button');btn.type='button';btn.className=cls;btn.setAttribute('aria-label',`Fotoğraf ${i+1}`);
+   const img=document.createElement('img');img.src=url;img.alt=`${p.name} fotoğraf ${i+1}`;img.loading='lazy';btn.append(img);btn.addEventListener('click',()=>viewPhoto(i));return btn};
+  $('productPhotoStrip').append(make('product-photo-mini'));
+  $('productPhotoThumbs').append(make('product-photo-thumb'));
+ }
+}
+function dateLabel(date){try{return new Intl.DateTimeFormat('tr-TR',{day:'numeric',month:'short',year:'numeric'}).format(new Date(date))}catch{return ''}}
+function commentCard(r){const article=document.createElement('article');article.className='visitor-note';
+ const top=document.createElement('div');top.className='note-top';
+ const name=document.createElement('strong');name.textContent=r.name;
+ const time=document.createElement('small');time.textContent=dateLabel(r.createdAt);top.append(name,time);article.append(top);
+ if(r.rating){const stars=document.createElement('div');stars.className='note-stars';stars.textContent='★'.repeat(r.rating)+'☆'.repeat(5-r.rating);article.append(stars)}
+ const body=document.createElement('p');body.className='note-message';body.textContent=r.message;article.append(body);return article;
+}
+async function getJson(url,options={}){const res=await fetch(url,{cache:'no-store',...options});let body={};try{body=await res.json()}catch{}if(!res.ok)throw new Error(body.error||'İstek başarısız.');return body}
+function selectRating(n){chosenRating=n;for(const btn of document.querySelectorAll('#ratingChooser button')){const on=Number(btn.dataset.rating)<=n;btn.classList.toggle('selected',on);btn.setAttribute('aria-pressed',String(Number(btn.dataset.rating)===n))}}
+function resetRating(){selectRating(0);$('productReviewForm').reset();$('productReviewMessage').textContent=''}
+async function loadProductReviews(p,reset){
+ const ticket=++reviewTicket;const page=reset?1:reviewPage+1;
+ if(reset){reviewPage=1;$('productReviewList').replaceChildren();$('productReviewList').textContent='Yorumlar yükleniyor…'}
+ try{
+  const data=await getJson(`/api/products/${encodeURIComponent(p.id)}/reviews?page=${page}`);
+  if(ticket!==reviewTicket||currentProduct?.id!==p.id)return;
+  reviewPage=page;if(reset)$('productReviewList').replaceChildren();
+  if(!data.total){$('productReviewList').textContent='Henüz yorum yapılmamış. İlk değerlendirme senden gelsin.'}
+  else for(const r of data.items)$('productReviewList').append(commentCard(r));
+  $('loadMoreProductReviews').hidden=!data.hasMore;
+  $('reviewAverage').textContent=data.rating.count?`★ ${data.rating.average} / 5`:'Henüz puan yok';$('reviewCount').textContent=data.rating.count?`${data.rating.count} değerlendirme`:'';
+ }catch(err){if(ticket===reviewTicket)$('productReviewList').textContent=err.message}
+}
+async function submitProductReview(e){e.preventDefault();if(!currentProduct)return;
+ if(!chosenRating){$('productReviewMessage').textContent='Önce 1–5 yıldız seç.';return}
+ const p=currentProduct;const btn=e.currentTarget.querySelector('button[type=submit]');btn.disabled=true;
+ $('productReviewMessage').textContent='';try{
+  await getJson(`/api/products/${encodeURIComponent(p.id)}/reviews`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('reviewName').value,message:$('reviewMessage').value,rating:chosenRating,website:$('reviewWebsite').value})});
+  $('productReviewMessage').textContent='Yorumun yayınlandı. Teşekkürler!';
+  $('reviewMessage').value='';selectRating(0);await loadProductReviews(p,true);
+ }catch(err){$('productReviewMessage').textContent=err.message}finally{btn.disabled=false}
+}
+function openGuestbook(){if(!active||modalOpen)return;closeCatalog();guestbookOpen=true;touchJoy={x:0,y:0};$('joyKnob').style.transform='';setShade();
+ $('guestbookModal').classList.add('open');$('guestbookModal').setAttribute('aria-hidden','false');$('guestFeedback').textContent='';loadGuestbook(true)}
+function closeGuestbook(){guestTicket++;guestbookOpen=false;$('guestbookModal').classList.remove('open');$('guestbookModal').setAttribute('aria-hidden','true');setShade()}
+async function loadGuestbook(reset){const ticket=++guestTicket;const page=reset?1:bookPage+1;
+ if(reset){bookPage=1;$('guestbookEntries').textContent='Defter açılıyor…'}
+ try{const data=await getJson(`/api/guestbook?page=${page}`);
+  if(!guestbookOpen||ticket!==guestTicket)return;if(reset)$('guestbookEntries').replaceChildren();bookPage=page;
+  if(!data.total)$('guestbookEntries').textContent='Defter henüz boş. İlk notu sen bırak!';
+  else for(const r of data.items)$('guestbookEntries').append(commentCard(r));
+  $('moreGuestbook').hidden=!data.hasMore;
+ }catch(err){if(ticket===guestTicket)$('guestbookEntries').textContent=err.message}
+}
+async function submitGuestbook(e){e.preventDefault();const btn=e.currentTarget.querySelector('button[type=submit]');btn.disabled=true;
+ $('guestFeedback').textContent='';try{
+  await getJson('/api/guestbook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('guestName').value,message:$('guestMessage').value,website:$('guestWebsite').value})});
+  $('guestMessage').value='';$('guestFeedback').textContent='Notun müze defterine eklendi. Teşekkürler!';await loadGuestbook(true);
+ }catch(err){$('guestFeedback').textContent=err.message}finally{btn.disabled=false}
+}
 function resetCamera(){camera.position.set(0,1.68,17);yaw=0;pitch=-.04;camera.rotation.set(pitch,yaw,0,'YXZ')}
 function allowed(x,z){
  if(x<-11.85||x>11.85||z<backZ+2.2||z>18.6)return false;
@@ -304,14 +396,16 @@ function allowed(x,z){
  return true;
 }
 function navigate(dt){
- if(!active||catalogOpen||modalOpen)return;
+ if(!active||catalogOpen||modalOpen||guestbookOpen)return;
  const forward=Number(keys.has('KeyW')||keys.has('ArrowUp'))-Number(keys.has('KeyS')||keys.has('ArrowDown'))-touchJoy.y;
  const side=Number(keys.has('KeyD')||keys.has('ArrowRight'))-Number(keys.has('KeyA')||keys.has('ArrowLeft'))+touchJoy.x;
  let f=forward,s=side;const len=Math.hypot(f,s);if(len<.04){isMoving=false;return}isMoving=true;
  f/=Math.max(len,1);s/=Math.max(len,1);
  const speed=mobile?3.65:4.6;
- const dx=(Math.sin(yaw)*f + Math.cos(yaw)*s)*speed*Math.min(dt,.045);
- const dz=(-Math.cos(yaw)*f + Math.sin(yaw)*s)*speed*Math.min(dt,.045);
+ // Three.js kamerada Y açısı pozitifken ileri yön -sin(yaw), -cos(yaw) olur.
+ // Bu dönüşüm WASD ve dokunmatik çubuğu her bakış yönünde aynı tutar.
+ const dx=(-Math.sin(yaw)*f + Math.cos(yaw)*s)*speed*Math.min(dt,.045);
+ const dz=(-Math.cos(yaw)*f - Math.sin(yaw)*s)*speed*Math.min(dt,.045);
  if(allowed(camera.position.x+dx,camera.position.z))camera.position.x+=dx;
  if(allowed(camera.position.x,camera.position.z+dz))camera.position.z+=dz;
 }
@@ -322,36 +416,40 @@ function updateProximity(dt){
  for(const s of stands){const dist=Math.hypot(camera.position.x-s.pos.x,camera.position.z-s.pos.z);
    if(dist<best){best=dist;nearest=s.p;}
  }
+ const guestDist=guestbookStand?Math.hypot(camera.position.x-guestbookStand.x,camera.position.z-guestbookStand.z):Infinity;
+ nearestGuestbook=guestDist<4.2&&guestDist<best;
  const near=best<4.6;
- $('hintText').textContent=near&&nearest?`${nearest.name} · E / İncele`:'Bir esere yaklaşarak inceleyebilirsin.';
- $('interactMobile').disabled=!near;$('interactMobile').textContent=near?'✦  Ürünü incele':'✦  Yaklaş ve incele';
+ $('hintText').textContent=nearestGuestbook?'Ziyaretçi defteri · E / Defteri aç':near&&nearest?`${nearest.name} · E / İncele`:'Bir esere yaklaşarak inceleyebilirsin.';
+ $('interactMobile').disabled=!near&&!nearestGuestbook;$('interactMobile').textContent=nearestGuestbook?'✎  Defteri aç':near?'✦  Ürünü incele':'✦  Yaklaş ve incele';
  if(!near)nearest=null;
 }
 function setupWalk(){
  const c=renderer.domElement;let pointer=null;
- c.addEventListener('pointerdown',e=>{if(!active||modalOpen||catalogOpen)return;
+ c.addEventListener('pointerdown',e=>{if(!active||modalOpen||catalogOpen||guestbookOpen)return;
   if(e.button!==0 && e.pointerType==='mouse')return;
   pointer={id:e.pointerId,x:e.clientX,y:e.clientY,total:0,prevX:e.clientX,prevY:e.clientY};c.setPointerCapture(e.pointerId);
  });
- c.addEventListener('pointermove',e=>{if(!pointer||pointer.id!==e.pointerId||modalOpen||catalogOpen)return;
+ c.addEventListener('pointermove',e=>{if(!pointer||pointer.id!==e.pointerId||modalOpen||catalogOpen||guestbookOpen)return;
   const dx=e.clientX-pointer.prevX,dy=e.clientY-pointer.prevY;
   pointer.total+=Math.hypot(dx,dy);pointer.prevX=e.clientX;pointer.prevY=e.clientY;
-  yaw+=dx*.0042;pitch=Math.max(-.75,Math.min(.78,pitch-dy*.0035));
+  yaw-=dx*.0042;pitch=Math.max(-.75,Math.min(.78,pitch-dy*.0035));
  });
  c.addEventListener('pointerup',e=>{
   if(!pointer||pointer.id!==e.pointerId)return;
   const p=pointer;pointer=null;if(p.total>12)return;
   const mouse=new THREE.Vector2(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);
   raycaster.setFromCamera(mouse,camera);
-  const matches=raycaster.intersectObjects(stands.map(s=>s.pedestal),true);
-  let hit=matches[0]?.object;while(hit&&!hit.userData.productId)hit=hit.parent;
+  const matches=raycaster.intersectObjects([...stands.map(s=>s.pedestal),guestbookStand.group],true);
+  let hit=matches[0]?.object;while(hit&&!hit.userData.productId&&!hit.userData.guestbook)hit=hit.parent;
   const id=hit?.userData?.productId;
-  if(id)openProduct(products.find(x=>x.id===id));
+  if(hit?.userData?.guestbook)openGuestbook();else if(id)openProduct(products.find(x=>x.id===id));
  });
  c.addEventListener('pointercancel',()=>pointer=null);
- window.addEventListener('keydown',e=>{if(HANDLED.has(e.code))e.preventDefault();keys.add(e.code);
-  if(e.code==='KeyE'&&!modalOpen&&active){if(nearest)openProduct(nearest);else showToast('İncelemek için bir ürüne yaklaş.');}
-  if(e.code==='Escape'){if(modalOpen)closeProduct();else if(catalogOpen)closeCatalog();}
+ window.addEventListener('keydown',e=>{
+  if(e.target?.closest?.('input,textarea,select,[contenteditable="true"]')){if(e.code==='Escape'){if(modalOpen)closeProduct();else if(guestbookOpen)closeGuestbook()}return}
+  if(HANDLED.has(e.code))e.preventDefault();keys.add(e.code);
+  if(e.code==='KeyE'&&!modalOpen&&!guestbookOpen&&!catalogOpen&&active){if(nearestGuestbook)openGuestbook();else if(nearest)openProduct(nearest);else showToast('Bir ürüne veya ziyaretçi defterine yaklaş.');}
+  if(e.code==='Escape'){if(modalOpen)closeProduct();else if(guestbookOpen)closeGuestbook();else if(catalogOpen)closeCatalog();}
  });
  window.addEventListener('keyup',e=>keys.delete(e.code));window.addEventListener('blur',()=>keys.clear());
  // Independent touch joystick with normalized displacement
@@ -367,12 +465,12 @@ function setupWalk(){
 }
 function animate(){
  requestAnimationFrame(animate);const dt=clock.getDelta();navigate(dt);
- camera.rotation.set(pitch,yaw,0,'YXZ');updateProximity(dt);refreshNearbyModels(dt);
- if(active&&!modalOpen&&!catalogOpen){
+ camera.rotation.set(pitch,yaw,0,'YXZ');if(!guestbookOpen)updateProximity(dt);refreshNearbyModels(dt);
+ if(active&&!modalOpen&&!catalogOpen&&!guestbookOpen){
   // Museums are still exhibitions; moving sculptures rotate slowly, not fast spinning displays.
   for(const stand of stands)stand.display.rotation.y+=dt*.16;
  }
- if(!modalOpen&&!catalogOpen)renderer.render(scene,camera);
+ if(!modalOpen&&!catalogOpen&&!guestbookOpen)renderer.render(scene,camera);
 }
 async function init(){
  try{
@@ -384,7 +482,7 @@ async function init(){
   products=await getProducts();
   const lastZ=11.4-(Math.max(1,Math.ceil(products.length/2))-1)*7;
   backZ=Math.min(-21,lastZ-5);galleryLength=21-backZ;galleryCenter=(21+backZ)/2;
-  setEnvironment();resetCamera();buildStands();renderCatalog();setupWalk();animate();
+  setEnvironment();resetCamera();buildStands();buildGuestbookStand();renderCatalog();setupWalk();animate();
   $('loadingScreen').remove();
   window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);fitViewer()});
  }catch(e){console.error(e);$('loadingScreen').innerHTML='<div>3D müze açılamadı.</div><div style="font:12px Arial;color:#c6ad8e;letter-spacing:0">Tarayıcında WebGL desteğini ve internet bağlantını kontrol et.</div>'}
@@ -398,8 +496,15 @@ musicButton.addEventListener('click',()=>{musicEnabled=!musicEnabled;updateMusic
 updateMusicButton();
 $('enterMuseum').addEventListener('click',()=>{$('welcome').hidden=true;active=true;tryPlayMusic();showToast(mobile?'Sol çubukla yürü, sağ tarafta sürükleyerek bak.':'WASD ile yürü, sürükleyerek çevrene bak.');});
 $('openCatalog').addEventListener('click',openCatalog);$('closeCatalog').addEventListener('click',closeCatalog);
-$('shade').addEventListener('click',()=>{closeCatalog();closeProduct()});
+$('shade').addEventListener('click',()=>{closeCatalog();closeProduct();closeGuestbook()});
 $('closeProduct').addEventListener('click',closeProduct);$('closeProduct2').addEventListener('click',closeProduct);
-$('resetPosition').addEventListener('click',resetCamera);$('interactMobile').addEventListener('click',()=>nearest&&openProduct(nearest));
+$('resetPosition').addEventListener('click',resetCamera);$('interactMobile').addEventListener('click',()=>{if(nearestGuestbook)openGuestbook();else if(nearest)openProduct(nearest)});
+$('openGuestbook').addEventListener('click',openGuestbook);$('closeGuestbook').addEventListener('click',closeGuestbook);
+$('mode3d').addEventListener('click',()=>selectViewerMode(false));$('modePhotos').addEventListener('click',()=>selectViewerMode(true));
+$('loadMoreProductReviews').addEventListener('click',()=>currentProduct&&loadProductReviews(currentProduct,false));
+$('moreGuestbook').addEventListener('click',()=>loadGuestbook(false));
+for(const btn of document.querySelectorAll('[data-rating]'))btn.addEventListener('click',()=>selectRating(Number(btn.dataset.rating)));
+$('productReviewForm').addEventListener('submit',submitProductReview);
+$('guestbookForm').addEventListener('submit',submitGuestbook);
 $('fullScreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{showToast('Tarayıcı tam ekranı desteklemiyor.')}});
 init();
