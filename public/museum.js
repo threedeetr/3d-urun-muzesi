@@ -5,19 +5,22 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const $ = id => document.getElementById(id);
 const money = n => new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',maximumFractionDigits:2}).format(Number(n)||0);
 const mobile = matchMedia('(pointer:coarse)').matches;
-const colors = { gold: 0xbfa477, dark: 0x212a27, wall: 0x45524d, floor: 0x67675c, cream: 0xd9cdb7 };
+const colors = { gold: 0xc9ae7a, dark: 0x182326, wall: 0x34434a, floor: 0x888d8c, cream: 0xe7e9e4 };
+const ART_SHAPES = new Set(['figure','ghost','stitch','ballerina','cat']);
+const roomOf = product => ART_SHAPES.has(product.shape) ? 'art' : 'design';
 // Ürün dosyalarının yalnızca sunucuda küçültülmüş GLB önizlemesini işler.
 const models = new Map();
 const MAX_VISIBLE_PREVIEWS = mobile ? 2 : 4;
 let proximityRefresh = 0;
-let products=[], scene, camera, renderer, clock, museumObjects=[], stands=[], colliders=[], nearest=null, nearestGuestbook=false, guestbookStand=null;
+let products=[], scene, camera, renderer, clock, museumObjects=[], stands=[], colliders=[], nearest=null, nearestGuestbook=false, guestbookStand=null, receptionStand=null;
 let backZ=-21, galleryLength=42, galleryCenter=0;
+let roomOpen=false, lastRoom="", drawAccumulator=0;
 let viewerRenderer, viewerScene, viewerCamera, viewerControl, viewerContent, viewerFrame=0, currentProduct=null;
 let active=false, modalOpen=false, catalogOpen=false, guestbookOpen=false, yaw=0, pitch=0, touchJoy={x:0,y:0}, isMoving=false;
 let reviewPage=1,bookPage=1,chosenRating=0,photoIndex=0,photoMode=false,reviewTicket=0,guestTicket=0;
 const keys=new Set();
 const raycaster = new THREE.Raycaster();
-const HANDLED = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowRight','ArrowDown','KeyE','Space']);
+const HANDLED = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowRight','ArrowDown','KeyE','KeyM','Space']);
 let toastTimer;
 const material=(color,metalness=.05,roughness=.65)=>new THREE.MeshStandardMaterial({color,metalness,roughness});
 function mesh(geo,mat,pos=[0,0,0],parent=null){const m=new THREE.Mesh(geo,mat);m.position.set(...pos);(parent||scene).add(m);return m;}
@@ -49,107 +52,168 @@ function surfaceFrame(x,y,z,w,h,rotation,text,subtitle){
  box(w,h,.13,material(0x26332e),0,0,.08,g);
  const tex=txtCanvas(text,subtitle);const sign=new THREE.Mesh(new THREE.PlaneGeometry(w-.18,h-.18),new THREE.MeshBasicMaterial({map:tex}));sign.position.z=.16;g.add(sign);
 }
-function setEnvironment(){
- scene=new THREE.Scene();scene.background=new THREE.Color(0x2f3a34);scene.fog=new THREE.Fog(0x2f3a34,22,65);
- const stone=material(colors.floor,0,.9),line=material(0x827e6f,0,.93),wall=material(colors.wall,0,.95),panel=material(0x36443f,0,.91),bronze=material(0xa88d61,.65,.31),plaster=material(0x879084,0,.85);
- box(28,.65,galleryLength,stone,0,-.35,galleryCenter);
- for(let x=-13;x<=13;x+=2.5){box(.018,.008,galleryLength-.4,line,x,.005,galleryCenter)}
- for(let z=backZ+1;z<=20;z+=2.5){box(27.6,.008,.018,line,0,.006,z)}
- for(let k=0;k<3;k++){const x=k===0?-11.9:k===1?0:11.9;box(.13,.025,galleryLength-.6,bronze,x,.017,galleryCenter)}
- box(.7,8.3,galleryLength,wall,-14,4,galleryCenter);box(.7,8.3,galleryLength,wall,14,4,galleryCenter);
- box(28,8.3,.7,wall,0,4,backZ);
- box(10.5,8.3,.7,wall,-8.75,4,21);box(10.5,8.3,.7,wall,8.75,4,21);
- box(7,2.1,.7,wall,0,7.2,21);
- box(28,.22,galleryLength,panel,0,8.65,galleryCenter);
- box(28,.23,1.5,plaster,0,8.25,backZ+.9);
- for (let z=backZ+2;z<=19;z+=6.5) {
-   for (const x of [-13.5,13.5]) {
-     box(.7,7.7,1.05,plaster,x,3.9,z);
-     box(.9,.21,1.25,bronze,x,7.8,z);box(.9,.21,1.25,bronze,x,.37,z);
-     box(.82,.12,1.1,bronze,x,5.15,z);
-   }
-   box(27.5,.22,.17,bronze,0,7.85,z);
- }
- // Ceiling coves and rhythmic lights
- for (let z=backZ+3;z<=16;z+=7){
-   box(8,.17,.21,bronze,0,8.25,z);
-   for(const x of [-7,0,7]){
-     cyl(.24,.29,.1,material(0xf2e3bf,.5,.25),x,8.11,z);
-     // Warm ceiling lights are emissive surfaces, avoiding dozens of dynamic lights on phones.
-   }
- }
- // Gold-trimmed doorway and central sign
- for(const x of [-3.8,3.8]){box(.45,7.8,.6,bronze,x,3.9,20.58)}
- box(8.1,.33,.65,bronze,0,7.85,20.58);
- surfaceFrame(0,4.2,backZ+.38,8.5,3.1,0,'THREEDEE','TASARIM   ·   MERAK   ·   KOLEKSİYON');
- // Müzede girişin karşısında da aynı marka logosu sergilenir.
- const logoTexture=new THREE.TextureLoader().load('/threedee-logo.webp');logoTexture.colorSpace=THREE.SRGBColorSpace;
- const brandSign=new THREE.Mesh(new THREE.PlaneGeometry(4.35,2.75),new THREE.MeshBasicMaterial({map:logoTexture,transparent:false}));
- brandSign.position.set(0,4.2,backZ+.555);scene.add(brandSign);
- surfaceFrame(-13.51,4.15,1.5,3.9,2.15,Math.PI/2,'YAKINDAN','Her ayrıntıyı keşfet');
- surfaceFrame(13.51,4.15,-6,3.9,2.15,-Math.PI/2,'DÖNDÜR','Üç boyutlu deneyim');
- // Decorative side wall insets
- for(const x of [-13.55,13.55])for(let z=11;z>backZ+2;z-=9){
-  const sign=new THREE.Group();sign.position.set(x,2.75,z);sign.rotation.y=x<0?Math.PI/2:-Math.PI/2;scene.add(sign);
-  box(3.15,2.9,.11,bronze,0,0,0,sign);box(2.98,2.72,.13,panel,0,0,.06,sign);
-  const trim=material(0x89948a,.28,.6);box(2.6,2.45,.03,trim,0,0,.14,sign);
-  box(2.52,2.36,.05,panel,0,0,.16,sign);
- }
- // Potted plants near entrance
- for(const x of [-10.7,10.7])for(const z of [backZ+2.0,18.1]){
-  cyl(.48,.32,1.1,material(0x5e5546),x,.58,z);
-  for(let t=0;t<7;t++){
-   const rad=t*6.283/7;const leaf=mesh(new THREE.ConeGeometry(.3,1.8,6),material(t%2?0x54694f:0x6d7860),[x+Math.cos(rad)*.24,1.55+Math.cos(t)*.12,z+Math.sin(rad)*.24]);
-   leaf.rotation.z=.16*Math.cos(rad);leaf.rotation.x=.16*Math.sin(rad);
+// V5 | Modern mimari: açık resepsiyon, iki fiziksel yan salon, arka dijital sergi.
+// Mobilden hızlı açılması için yansıtmalı post-processing/gölge haritaları kullanılmaz.
+function makeWall(x,z0,z1,mat,thick=.25){
+ if(z1-z0<.12)return;
+ box(thick,6.35,z1-z0,mat,x,3.25,(z0+z1)/2);
+ colliders.push({type:'rect',minX:x-thick/2-.24,maxX:x+thick/2+.24,minZ:z0-.22,maxZ:z1+.22});
+}
+function buildGlassSalonWalls(){
+ const alloy=material(0x8cabae,.72,.3),dark=material(0x23333a,.45,.51),glow=new THREE.MeshBasicMaterial({color:0xc2e4db});
+ const doorCenters=[];
+ for(let z=8.5;z>=backZ+1.2;z-=12.8)doorCenters.push(z);
+ for(const x of [-5.05,5.05]){
+  const openings=doorCenters.map(z=>[Math.max(backZ+1,z-2.5),Math.min(12.45,z+2.5)]).sort((a,b)=>a[0]-b[0]);
+  let cursor=backZ+1;
+  for(const [from,to] of openings){if(from>cursor)makeWall(x,cursor,from,dark,.21);cursor=Math.max(cursor,to)}
+  if(cursor<12.45)makeWall(x,cursor,12.45,dark,.21);
+  // Kapıların üstündeki kesintisiz ışıklı lentolar yönlendirmeyi kolaylaştırır.
+  for(const z of doorCenters){
+   if(z-2.5<backZ+1||z+2.5>12.46)continue;
+   box(.24,.26,5.25,alloy,x,6.52,z);
+   box(.27,.042,4.65,glow,x,6.33,z);
+   for(const offset of [-2.62,2.62])box(.31,6.10,.12,alloy,x,3.12,z+offset);
   }
  }
- scene.add(new THREE.HemisphereLight(0xf3e5c8,0x252a28,2.5));
- const dir=new THREE.DirectionalLight(0xffedcf,2.2);dir.position.set(3,12,12);scene.add(dir);
 }
-const scenePositions=[];
-for(let row=0;row<5;row++)for(let side of [-1,1])scenePositions.push({x:side*7.5,z:11.4-row*7.0});
-// Positions extend the museum automatically as new products are published.
-function positionFor(i){if(i<scenePositions.length)return scenePositions[i];return {x:(i%2?-1:1)*7.5,z:11.4-Math.floor(i/2)*7.0}}
+function ledLine(w,d,x,y,z,color=0xbfe0e4){return box(w,.026,d,new THREE.MeshBasicMaterial({color}),x,y,z)}
+function makeOverheadSign(title,subtitle,z){
+ const group=new THREE.Group();group.position.set(0,5.48,z);scene.add(group);
+ box(6.95,1.18,.12,material(0x23323b,.55,.32),0,0,0,group);
+ box(6.75,1.04,.12,material(0x141f25,.45,.48),0,0,.06,group);
+ const texture=txtCanvas(title,subtitle,1000,350,'item');
+ const face=new THREE.Mesh(new THREE.PlaneGeometry(6.35,.96),new THREE.MeshBasicMaterial({map:texture}));face.position.z=.14;group.add(face);
+}
+function setEnvironment(){
+ scene=new THREE.Scene();scene.background=new THREE.Color(0x303d43);scene.fog=new THREE.FogExp2(0x303d43,mobile?.012:.008);
+ const floor=material(0x979d9b,.18,.43),tile=material(0x6e7779,.05,.75),wall=material(0x3a484f,.2,.58);
+ const marble=material(0xe0e4e1,.2,.37),glass=material(0x7fa6b3,.28,.48),alloy=material(0xa9b7b7,.76,.29);
+ const bronze=material(0xc7a671,.67,.3),charcoal=material(0x1d2b30,.32,.58);
+ box(28,.55,galleryLength,floor,0,-.28,galleryCenter);
+ // Büyük karo zemin: her karoya ayrı mesh değil, yalnızca ince derz çizgileri.
+ for(let x=-13;x<=13;x+=2.6)box(.024,.008,galleryLength-.5,tile,x,.007,galleryCenter);
+ for(let z=backZ+.7;z<20.7;z+=2.6)box(27.7,.008,.024,tile,0,.008,z);
+ // Merkezdeki kesintisiz yönlendirme çizgileri
+ ledLine(.035,galleryLength-.6,-4.45,.018,galleryCenter,0xbdd3d3);
+ ledLine(.035,galleryLength-.6,4.45,.018,galleryCenter,0xbdd3d3);
+ for(let z=backZ+2;z<=20;z+=6.5){ledLine(2.2,.027,0,.022,z,0xd1b788)}
+ box(.45,8.5,galleryLength,wall,-14,4.1,galleryCenter);
+ box(.45,8.5,galleryLength,wall,14,4.1,galleryCenter);
+ box(28,8.5,.4,wall,0,4.1,backZ);
+ box(28,.22,galleryLength,charcoal,0,8.48,galleryCenter);
+ // Giriş duvarı, dışarıdan içeri bakışı engellemeyen merkezi kapı
+ for(const x of [-10.4,10.4])box(7.1,8.3,.4,wall,x,4.15,21);
+ box(6.75,2.3,.4,wall,0,7.12,21);
+ for(const x of [-7.15,7.15]){box(.24,8.1,.46,alloy,x,4.06,20.7);box(.09,7.5,.05,bronze,x,4,20.35)}
+ // Işıklı duvar nişleri ve modern mimari dikeyler
+ for(let z=backZ+3;z<20;z+=7.4){
+  for(const x of [-13.65,13.65]){
+   box(.15,6.65,2.7,marble,x,3.48,z);
+   box(.18,6.05,.045,alloy,x,3.44,z-1.18);
+   box(.18,6.05,.045,alloy,x,3.44,z+1.18);
+  }
+  box(27.45,.095,.12,alloy,0,7.8,z);
+ }
+ // Hafif aydınlatma: onlarca hareketli spot yerine ışıklı geometriler.
+ for(let z=backZ+2.8;z<19.5;z+=5.4){
+  for(const x of [-10.8,-2.4,2.4,10.8]){
+   box(2.3,.06,.31,charcoal,x,8.19,z);
+   ledLine(1.78,.13,x,8.139,z,0xe5e5d4);
+  }
+ }
+ buildGlassSalonWalls();
+ // Bölüm zeminleri renk farkıyla algılanır; duvarlardaki grafikler bağımsız salonları tanımlar.
+ for(const x of [-9,9])box(7.3,.012,Math.max(5,galleryLength-13),material(x<0?0x9e9b93:0x858e93,.06,.56),x,.017,galleryCenter-4.7);
+ surfaceFrame(-13.55,4.2,8.8,3.8,2.2,Math.PI/2,'SANAT SALONU','FİGÜRLER & ÖZGÜN TASARIMLAR');
+ surfaceFrame(13.55,4.2,8.8,3.8,2.2,-Math.PI/2,'TEKNOLOJİ','IŞIK & MASAÜSTÜ TASARIMLAR');
+ surfaceFrame(-13.55,4.2,-9,3.8,2.2,Math.PI/2,'KOLEKSİYON','KENDİNE ÖZGÜ PARÇALAR');
+ surfaceFrame(13.55,4.2,-9,3.8,2.2,-Math.PI/2,'3D ATÖLYESİ','ÜRETİMDEN SERGİYE');
+ makeOverheadSign('THREEDEE','SANAL TASARIM MÜZESİ',12.5);
+ surfaceFrame(0,4.55,backZ+.35,8,2.9,0,'YENİ NESİL MÜZE','GERÇEK MODELLER • KENDİ TARZIN');
+ // Marka logosu sergi bitiminde tek, net bir görsel olarak konumlanır.
+ const logoTexture=new THREE.TextureLoader().load('/threedee-logo.webp');logoTexture.colorSpace=THREE.SRGBColorSpace;
+ const brandSign=new THREE.Mesh(new THREE.PlaneGeometry(4.2,2.6),new THREE.MeshBasicMaterial({map:logoTexture}));
+ brandSign.position.set(0,4.45,backZ+.51);scene.add(brandSign);
+ buildReception();buildDigitalExhibit();
+ scene.add(new THREE.HemisphereLight(0xe3f5fb,0x20292a,mobile?2.45:2.65));
+ const sun=new THREE.DirectionalLight(0xffeed9,mobile?2.15:2.7);sun.position.set(3.8,11,13);scene.add(sun);
+}
+function buildReception(){
+ const x=-3.45,z=16.20,group=new THREE.Group();group.position.set(x,0,z);scene.add(group);
+ const stone=material(0xe9e5da,.15,.35),black=material(0x25333a,.5,.34),bronze=material(0xcaa86d,.66,.28);
+ box(2.0,.26,1.0,stone,0,1.26,0,group);
+ box(1.85,1.13,.85,black,0,.59,0,group);
+ box(1.82,.044,.91,bronze,0,1.08,.0,group);
+ box(1.4,.53,.04,stone,0,.72,.45,group);
+ const plaque=new THREE.Mesh(new THREE.PlaneGeometry(1.33,.43),new THREE.MeshBasicMaterial({map:txtCanvas('THREEDEE','DANIŞMA • HOŞ GELDİN',630,320,'item')}));
+ plaque.position.set(0,.72,.48);group.add(plaque);
+ const monitor=box(.72,.54,.055,black,0,1.66,-.1,group);monitor.rotation.x=-.18;
+ const screen=box(.61,.42,.058,new THREE.MeshBasicMaterial({color:0x95d0d4}),0,1.67,-.058,group);screen.rotation.x=-.18;
+ cyl(.06,.06,.28,bronze,0,1.38,-.15,group,12);
+ group.userData.guestbook=true;
+ colliders.push({x,z,r:1.25});receptionStand={x,z,group};
+}
+function buildDigitalExhibit(){
+ const group=new THREE.Group();group.position.set(0,0,backZ+3.15);scene.add(group);
+ const bronze=material(0xc4ab7d,.65,.32),dark=material(0x26343a,.43,.53),cool=material(0x80d8db,.48,.22);
+ cyl(.83,.94,.21,dark,0,.11,0,group,28);
+ cyl(.75,.8,.08,bronze,0,.25,0,group,28);
+ const knot=mesh(new THREE.TorusKnotGeometry(.36,.095,mobile?48:85,8,2,3),cool,[0,1.42,0],group);knot.rotation.x=.4;
+ const ring=torus(.87,.025,bronze,0,1.45,0,group);ring.rotation.y=.30;
+ const ring2=torus(.83,.025,cool,0,1.45,0,group);ring2.rotation.x=.45;
+ const label=new THREE.Mesh(new THREE.PlaneGeometry(3.4,1.12),new THREE.MeshBasicMaterial({map:txtCanvas('DİJİTAL SANAT','TEKNOLOJİ İLE TASARIM',800,350,'item')}));
+ label.position.set(0,3.3,.0);group.add(label);
+ colliders.push({x:0,z:backZ+3.15,r:1.05});museumObjects.push({group,ring,ring2,knot});
+}
+function roomCounts(){return {art:products.filter(p=>roomOf(p)==='art').length,design:products.filter(p=>roomOf(p)==='design').length}}
 function buildStands(){
- // All published products get their own plinth, including newly uploaded models.
+ const count={art:0,design:0};
+ const base=material(0x333f44,.38,.39),top=material(0xd7deda,.31,.37),brass=material(0xbba276,.75,.28);
+ const fixture=new THREE.MeshBasicMaterial({color:0xb3e2d7});
+ const glassMat=new THREE.MeshPhysicalMaterial({color:0xe0f5fb,transparent:true,opacity:.075,roughness:.16,metalness:.05,depthWrite:false,side:THREE.DoubleSide});
  for(let i=0;i<products.length;i++){
-  const p=products[i],pos=positionFor(i);
+  const p=products[i],room=roomOf(p),idx=count[room]++;
+  const pos={x:room==='art'?-9.0:9.0,z:10.1-idx*6.4};
   const pedestal=new THREE.Group();pedestal.position.set(pos.x,0,pos.z);scene.add(pedestal);
-  const base=material(0x989889,.10,.75),top=material(0xc9bea8,.23,.5),gold=material(0xc9a976,.7,.31);
-  cyl(1.55,1.65,.28,base,0,.14,0,pedestal,8);
-  cyl(1.27,1.41,.90,base,0,.72,0,pedestal,8);
-  cyl(1.41,1.36,.09,gold,0,1.18,0,pedestal,8);
-  cyl(1.35,1.33,.07,top,0,1.26,0,pedestal,8);
-  const glass=new THREE.Mesh(new THREE.CylinderGeometry(1.16,1.16,2.2,32,1,true),new THREE.MeshPhysicalMaterial({color:0xebf6e9,transparent:true,opacity:.045,metalness:.05,roughness:.11,side:THREE.DoubleSide,depthWrite:false}));
+  cyl(1.56,1.64,.19,base,0,.105,0,pedestal,10);
+  cyl(1.3,1.38,.91,base,0,.66,0,pedestal,10);
+  cyl(1.35,1.36,.09,brass,0,1.16,0,pedestal,16);
+  cyl(1.32,1.34,.075,top,0,1.26,0,pedestal,16);
+  // Yuvarlatılmış şeffaf vitrin + ince metal iskelet.
+  const glass=new THREE.Mesh(new THREE.CylinderGeometry(1.14,1.14,2.26,mobile?12:24,1,true),glassMat);
   glass.position.y=2.43;pedestal.add(glass);
-  const display=new THREE.Group();display.position.y=1.30;pedestal.add(display);
-  const labelGroup=new THREE.Group();labelGroup.position.set(0,.68,pos.x<0?1.47:1.47);pedestal.add(labelGroup);
-  box(1.82,.73,.08,gold,0,0,0,labelGroup);
-  const label=mesh(new THREE.PlaneGeometry(1.75,.68),new THREE.MeshBasicMaterial({map:txtCanvas(p.name,money(p.price),600,380,'item')}),[0,0,.048],labelGroup);
-  // Heykeller ilk yüklemede ağır modelleri açmaz. Önce hafif temsili siluet görünür.
+  cyl(1.16,1.16,.05,brass,0,3.58,0,pedestal,16);
+  cyl(1.17,1.17,.07,base,0,3.64,0,pedestal,16);
+  cyl(.57,.57,.03,fixture,0,3.595,0,pedestal,16);
+  for(const theta of [0,Math.PI/2,Math.PI,Math.PI*1.5]){
+   const x=Math.cos(theta)*1.11,z=Math.sin(theta)*1.11;
+   cyl(.018,.018,2.27,brass,x,2.46,z,pedestal,7);
+  }
+  const display=new THREE.Group();display.position.y=1.33;pedestal.add(display);
+  const labelGroup=new THREE.Group();labelGroup.position.set(0,.67,1.53);pedestal.add(labelGroup);
+  box(2.15,.89,.10,brass,0,0,0,labelGroup);
+  box(2.04,.79,.11,material(0x223039,.46,.36),0,0,.06,labelGroup);
+  mesh(new THREE.PlaneGeometry(1.99,.75),new THREE.MeshBasicMaterial({map:txtCanvas(p.name,money(p.price),650,380,'item')}),[0,0,.121],labelGroup);
   pedestal.userData.productId=p.id;
-  const placeholder=normalized(demoModel(p.modelUrl?{...p,shape:'abstract'}:p));
-  display.add(placeholder);placeholder.position.y=.04;
-  stands.push({p,pos,pedestal,display,placeholder,actual:null,loading:false,failed:false});
-  // Telefonda onlarca dinamik Spotlight GPU kullanımını şişiriyordu; statik vurgulara geçildi.
-  const glow=material(0xd7ad70,.18,.45);glow.emissive.setHex(0x3f2911);glow.emissiveIntensity=.4;
-  const accent=cyl(1.32,1.33,.025,glow,0,1.31,0,pedestal,24);
-  colliders.push({x:pos.x,z:pos.z,r:1.45});
+  const placeholder=normalized(demoModel(p.modelUrl?{...p,shape:'abstract'}:p));display.add(placeholder);placeholder.position.y=.04;
+  stands.push({p,pos,room,pedestal,display,placeholder,actual:null,loading:false,failed:false});
+  colliders.push({x:pos.x,z:pos.z,r:1.68});
  }
 }
 function buildGuestbookStand(){
- // Ziyaretçi defteri girişten birkaç adım içeride, diğer ürünlerden bağımsızdır.
- const x=3.65,z=15.15;const group=new THREE.Group();group.position.set(x,0,z);scene.add(group);
- const wood=material(0x584232,.2,.65),gold=material(0xc6a46b,.6,.3),paper=material(0xece0bf,0,.85);
- const foot=cyl(.66,.74,.21,wood,0,.11,0,group,8);
- cyl(.19,.25,1.3,wood,0,.82,0,group,8);
- const top=box(1.85,.12,1.15,wood,0,1.55,0,group);top.rotation.x=-.22;
- const book=new THREE.Group();book.position.set(0,1.65,.04);book.rotation.x=-.22;group.add(book);
- box(1.3,.08,.85,gold,0,0,0,book);box(1.2,.09,.77,paper,0,.078,0,book);
- box(.025,.085,.74,wood,0,.126,0,book);box(.44,.015,.025,gold,-.3,.135,.1,book);box(.44,.015,.025,gold,.3,.135,.1,book);
- const plaque=new THREE.Mesh(new THREE.PlaneGeometry(2.4,.97),new THREE.MeshBasicMaterial({map:txtCanvas('ZİYARETÇİ DEFTERİ','DOKUN & YORUM YAZ',650,350,'item')}));
- plaque.position.set(0,2.75,.03);group.add(plaque);
- group.userData.guestbook=true;colliders.push({x,z,r:1.0});guestbookStand={x,z,group};
+ // Resepsiyon karşısında açılabilir fiziksel ziyaretçi defteri.
+ const x=3.65,z=15.35,group=new THREE.Group();group.position.set(x,0,z);scene.add(group);
+ const stone=material(0x414e54,.42,.45),bronze=material(0xc5aa7b,.65,.33),paper=material(0xebe6d9,.05,.75);
+ cyl(.64,.73,.17,stone,0,.09,0,group,10);cyl(.16,.2,1.17,stone,0,.72,0,group,10);
+ const top=box(1.81,.12,1.13,bronze,0,1.41,0,group);top.rotation.x=-.18;
+ const book=new THREE.Group();book.position.set(0,1.53,.06);book.rotation.x=-.18;group.add(book);
+ box(1.35,.055,.88,stone,0,0,0,book);box(1.26,.062,.78,paper,0,.07,0,book);
+ box(.022,.085,.72,bronze,0,.118,0,book);
+ for(let t=-1;t<=1;t++)box(.37,.012,.028,bronze,t*.35,.13,.10,book);
+ const label=new THREE.Mesh(new THREE.PlaneGeometry(2.55,.98),new THREE.MeshBasicMaterial({map:txtCanvas('MÜZE DEFTERİ','ZİYARETÇİ YORUMLARI',750,350,'item')}));
+ label.position.set(0,2.65,0);group.add(label);
+ group.userData.guestbook=true;colliders.push({x,z,r:1.08});guestbookStand={x,z,group};
 }
 function demoModel(p){
  const group=new THREE.Group(), color=material(p.color||'#bba78b',.16,.45),alt=material(0xd8cdb8,.15,.56),black=material(0x272b2a,.1,.65),pink=material(0xd5a9a7,.1,.54);
@@ -238,7 +302,7 @@ async function loadDisplay(p){
 }
 // Galeri içinde yalnızca yakındaki modeller yüklenir. Uzaklaşınca gölge/siluet geri gelir.
 function refreshNearbyModels(dt){
- if(!active||modalOpen||catalogOpen||guestbookOpen)return;
+ if(!active||modalOpen||catalogOpen||guestbookOpen||roomOpen)return;
  proximityRefresh+=dt;if(proximityRefresh<.8)return;proximityRefresh=0;
  const near=stands.filter(s=>s.p.modelUrl&&s.p.previewUrl).map(s=>({s,d:Math.hypot(camera.position.x-s.pos.x,camera.position.z-s.pos.z)})).sort((a,b)=>a.d-b.d);
  const visible=new Set(near.filter(x=>x.d<12).slice(0,MAX_VISIBLE_PREVIEWS).map(x=>x.s));
@@ -273,8 +337,8 @@ function renderCatalog(){
   const arrow=document.createElement('span');arrow.className='catalog-arrow';arrow.textContent='↗';data.append(strong,small);btn.append(number,swatch,data,arrow);btn.addEventListener('click',()=>openProduct(p));list.append(btn);
  });
 }
-function setShade(){const show=catalogOpen||modalOpen||guestbookOpen;$('shade').hidden=!show;}
-function openCatalog(){if(modalOpen)return;catalogOpen=true;$('catalogDrawer').classList.add('open');$('catalogDrawer').setAttribute('aria-hidden','false');setShade()}
+function setShade(){const show=catalogOpen||modalOpen||guestbookOpen||roomOpen;$('shade').hidden=!show;}
+function openCatalog(){if(modalOpen)return;closeRooms();catalogOpen=true;$('catalogDrawer').classList.add('open');$('catalogDrawer').setAttribute('aria-hidden','false');setShade()}
 function closeCatalog(){catalogOpen=false;$('catalogDrawer').classList.remove('open');$('catalogDrawer').setAttribute('aria-hidden','true');setShade()}
 function fitViewer(){if(!viewerRenderer||!$('productViewer').clientWidth)return;const el=$('productViewer');const w=el.clientWidth,h=el.clientHeight;viewerRenderer.setSize(w,h,false);viewerCamera.aspect=w/h;viewerCamera.updateProjectionMatrix()}
 function initViewer(){
@@ -299,7 +363,7 @@ function initViewer(){
 let loadTicket=0;
 async function openProduct(p){
  if(!p)return;
- closeCatalog();modalOpen=true;currentProduct=p;touchJoy={x:0,y:0};$('joyKnob').style.transform='';setShade();
+ closeCatalog();closeRooms();modalOpen=true;currentProduct=p;touchJoy={x:0,y:0};$('joyKnob').style.transform='';setShade();
  $('productModal').classList.add('open');$('productModal').setAttribute('aria-hidden','false');
  renderProductPhotos(p);selectViewerMode(false);resetRating();loadProductReviews(p,true);
  $('productIndex').textContent=String(products.findIndex(x=>x.id===p.id)+1).padStart(2,'0');
@@ -371,7 +435,7 @@ async function submitProductReview(e){e.preventDefault();if(!currentProduct)retu
   $('reviewMessage').value='';selectRating(0);await loadProductReviews(p,true);
  }catch(err){$('productReviewMessage').textContent=err.message}finally{btn.disabled=false}
 }
-function openGuestbook(){if(!active||modalOpen)return;closeCatalog();guestbookOpen=true;touchJoy={x:0,y:0};$('joyKnob').style.transform='';setShade();
+function openGuestbook(){if(!active||modalOpen)return;closeCatalog();closeRooms();guestbookOpen=true;touchJoy={x:0,y:0};$('joyKnob').style.transform='';setShade();
  $('guestbookModal').classList.add('open');$('guestbookModal').setAttribute('aria-hidden','false');$('guestFeedback').textContent='';loadGuestbook(true)}
 function closeGuestbook(){guestTicket++;guestbookOpen=false;$('guestbookModal').classList.remove('open');$('guestbookModal').setAttribute('aria-hidden','true');setShade()}
 async function loadGuestbook(reset){const ticket=++guestTicket;const page=reset?1:bookPage+1;
@@ -389,47 +453,84 @@ async function submitGuestbook(e){e.preventDefault();const btn=e.currentTarget.q
   $('guestMessage').value='';$('guestFeedback').textContent='Notun müze defterine eklendi. Teşekkürler!';await loadGuestbook(true);
  }catch(err){$('guestFeedback').textContent=err.message}finally{btn.disabled=false}
 }
-function resetCamera(){camera.position.set(0,1.68,17);yaw=0;pitch=-.04;camera.rotation.set(pitch,yaw,0,'YXZ')}
+function resetCamera(){camera.position.set(0,1.68,17.65);yaw=0;pitch=-.03;camera.rotation.set(pitch,yaw,0,'YXZ');keys.clear();touchJoy={x:0,y:0};$('joyKnob').style.transform=''}
 function allowed(x,z){
- if(x<-11.85||x>11.85||z<backZ+2.2||z>18.6)return false;
- for(const o of colliders)if(Math.hypot(x-o.x,z-o.z)<o.r+0.38)return false;
+ if(x<-12.85||x>12.85||z<backZ+1.62||z>19.15)return false;
+ for(const o of colliders){
+  if(o.type==='rect'){if(x>o.minX&&x<o.maxX&&z>o.minZ&&z<o.maxZ)return false}
+  else if(Math.hypot(x-o.x,z-o.z)<o.r+.30)return false;
+ }
  return true;
 }
 function navigate(dt){
- if(!active||catalogOpen||modalOpen||guestbookOpen)return;
+ if(!active||catalogOpen||modalOpen||guestbookOpen||roomOpen)return;
  const forward=Number(keys.has('KeyW')||keys.has('ArrowUp'))-Number(keys.has('KeyS')||keys.has('ArrowDown'))-touchJoy.y;
  const side=Number(keys.has('KeyD')||keys.has('ArrowRight'))-Number(keys.has('KeyA')||keys.has('ArrowLeft'))+touchJoy.x;
  let f=forward,s=side;const len=Math.hypot(f,s);if(len<.04){isMoving=false;return}isMoving=true;
  f/=Math.max(len,1);s/=Math.max(len,1);
- const speed=mobile?3.65:4.6;
- // Three.js kamerada Y açısı pozitifken ileri yön -sin(yaw), -cos(yaw) olur.
- // Bu dönüşüm WASD ve dokunmatik çubuğu her bakış yönünde aynı tutar.
- const dx=(-Math.sin(yaw)*f + Math.cos(yaw)*s)*speed*Math.min(dt,.045);
- const dz=(-Math.cos(yaw)*f - Math.sin(yaw)*s)*speed*Math.min(dt,.045);
+ const speed=mobile?3.5:4.5;
+ const dx=(-Math.sin(yaw)*f+Math.cos(yaw)*s)*speed*Math.min(dt,.055);
+ const dz=(-Math.cos(yaw)*f-Math.sin(yaw)*s)*speed*Math.min(dt,.055);
  if(allowed(camera.position.x+dx,camera.position.z))camera.position.x+=dx;
  if(allowed(camera.position.x,camera.position.z+dz))camera.position.z+=dz;
 }
+function updateRoomIndicator(){
+ let room='MERKEZ KORİDORU',description='Salonlar arasında keşfe çık.';
+ if(camera.position.z>12.4){room='GİRİŞ LOBİSİ';description='Resepsiyon & ziyaretçi defteri';}
+ else if(camera.position.x<-5.05){room='SANAT SALONU';description='Figürler ve özgün heykeller';}
+ else if(camera.position.x>5.05){room='TASARIM SALONU';description='Işık ve teknolojik tasarımlar';}
+ else if(camera.position.z<backZ+10){room='DİJİTAL SERGİ';description='ThreeDee özel koleksiyonu';}
+ if(room===lastRoom)return;lastRoom=room;
+ $('hudRoomTitle').textContent=room;$('hudRoomSub').textContent=description;
+ $('roomCurrent').textContent=room;
+}
 let proximityMs=0;
 function updateProximity(dt){
- proximityMs+=dt;if(proximityMs<.18)return;proximityMs=0;
- nearest=null;let best=Infinity;
+ proximityMs+=dt;if(proximityMs<.16)return;proximityMs=0;
+ updateRoomIndicator();nearest=null;let best=Infinity;
  for(const s of stands){const dist=Math.hypot(camera.position.x-s.pos.x,camera.position.z-s.pos.z);
-   if(dist<best){best=dist;nearest=s.p;}
+  if(dist<best){best=dist;nearest=s.p}
  }
- const guestDist=guestbookStand?Math.hypot(camera.position.x-guestbookStand.x,camera.position.z-guestbookStand.z):Infinity;
- nearestGuestbook=guestDist<4.2&&guestDist<best;
- const near=best<4.6;
- $('hintText').textContent=nearestGuestbook?'Ziyaretçi defteri · E / Defteri aç':near&&nearest?`${nearest.name} · E / İncele`:'Bir esere yaklaşarak inceleyebilirsin.';
- $('interactMobile').disabled=!near&&!nearestGuestbook;$('interactMobile').textContent=nearestGuestbook?'✎  Defteri aç':near?'✦  Ürünü incele':'✦  Yaklaş ve incele';
+ const bookDist=guestbookStand?Math.hypot(camera.position.x-guestbookStand.x,camera.position.z-guestbookStand.z):Infinity;
+ const deskDist=receptionStand?Math.hypot(camera.position.x-receptionStand.x,camera.position.z-receptionStand.z):Infinity;
+ const guestDist=Math.min(bookDist,deskDist);
+ nearestGuestbook=guestDist<3.7&&guestDist<best;
+ const near=best<4.8;
+ $('hintText').textContent=nearestGuestbook?'Resepsiyon · E / Müze defterini aç':near&&nearest?`${nearest.name} · E / İncele`:'Bir vitrinin yanına git veya Salonlar menüsünü aç.';
+ $('interactMobile').disabled=!near&&!nearestGuestbook;$('interactMobile').textContent=nearestGuestbook?'✎ Defteri aç':near?'✦ Ürünü incele':'✦ Vitrine yaklaş';
  if(!near)nearest=null;
+}
+function openRooms(){
+ if(!active){showToast('Önce müzeye giriş yap.');return}
+ if(modalOpen||guestbookOpen)return;
+ closeCatalog();roomOpen=true;keys.clear();touchJoy={x:0,y:0};$('joyKnob').style.transform='';
+ $('roomPanel').classList.add('open');$('roomPanel').setAttribute('aria-hidden','false');setShade();
+}
+function closeRooms(){roomOpen=false;$('roomPanel').classList.remove('open');$('roomPanel').setAttribute('aria-hidden','true');setShade()}
+function goRoom(room){
+ closeRooms();let x=0,z=17.65,direction=0;
+ if(room==='art'){x=-6.72;z=8.0;direction=Math.PI/2}
+ if(room==='design'){x=6.72;z=8.0;direction=-Math.PI/2}
+ if(room==='signature'){x=0;z=backZ+7;direction=0}
+ if(!allowed(x,z)){
+  // Çarpışmaların çevresindeki güvenli bölgeyi bul, kullanıcı duvar içine yerleşmesin.
+  let found=false;for(let radius=0;radius<=4&&!found;radius+=.5)for(let a=0;a<16;a++){
+   const xx=x+Math.cos(a*Math.PI/8)*radius,zz=z+Math.sin(a*Math.PI/8)*radius;
+   if(allowed(xx,zz)){x=xx;z=zz;found=true;break}
+  }
+  if(!found){x=0;z=17.65;direction=0}
+ }
+ camera.position.set(x,1.68,z);yaw=direction;pitch=-.045;camera.rotation.set(pitch,yaw,0,'YXZ');
+ keys.clear();touchJoy={x:0,y:0};$('joyKnob').style.transform='';lastRoom='';updateRoomIndicator();updateProximity(.25);
+ showToast('Seçtiğin salondasın. Etrafına bakarak keşfet!');
 }
 function setupWalk(){
  const c=renderer.domElement;let pointer=null;
- c.addEventListener('pointerdown',e=>{if(!active||modalOpen||catalogOpen||guestbookOpen)return;
+ c.addEventListener('pointerdown',e=>{if(!active||modalOpen||catalogOpen||guestbookOpen||roomOpen)return;
   if(e.button!==0 && e.pointerType==='mouse')return;
   pointer={id:e.pointerId,x:e.clientX,y:e.clientY,total:0,prevX:e.clientX,prevY:e.clientY};c.setPointerCapture(e.pointerId);
  });
- c.addEventListener('pointermove',e=>{if(!pointer||pointer.id!==e.pointerId||modalOpen||catalogOpen||guestbookOpen)return;
+ c.addEventListener('pointermove',e=>{if(!pointer||pointer.id!==e.pointerId||modalOpen||catalogOpen||guestbookOpen||roomOpen)return;
   const dx=e.clientX-pointer.prevX,dy=e.clientY-pointer.prevY;
   pointer.total+=Math.hypot(dx,dy);pointer.prevX=e.clientX;pointer.prevY=e.clientY;
   yaw-=dx*.0042;pitch=Math.max(-.75,Math.min(.78,pitch-dy*.0035));
@@ -439,7 +540,7 @@ function setupWalk(){
   const p=pointer;pointer=null;if(p.total>12)return;
   const mouse=new THREE.Vector2(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);
   raycaster.setFromCamera(mouse,camera);
-  const matches=raycaster.intersectObjects([...stands.map(s=>s.pedestal),guestbookStand.group],true);
+  const matches=raycaster.intersectObjects([...stands.map(s=>s.pedestal),guestbookStand.group,receptionStand.group],true);
   let hit=matches[0]?.object;while(hit&&!hit.userData.productId&&!hit.userData.guestbook)hit=hit.parent;
   const id=hit?.userData?.productId;
   if(hit?.userData?.guestbook)openGuestbook();else if(id)openProduct(products.find(x=>x.id===id));
@@ -448,8 +549,9 @@ function setupWalk(){
  window.addEventListener('keydown',e=>{
   if(e.target?.closest?.('input,textarea,select,[contenteditable="true"]')){if(e.code==='Escape'){if(modalOpen)closeProduct();else if(guestbookOpen)closeGuestbook()}return}
   if(HANDLED.has(e.code))e.preventDefault();keys.add(e.code);
-  if(e.code==='KeyE'&&!modalOpen&&!guestbookOpen&&!catalogOpen&&active){if(nearestGuestbook)openGuestbook();else if(nearest)openProduct(nearest);else showToast('Bir ürüne veya ziyaretçi defterine yaklaş.');}
-  if(e.code==='Escape'){if(modalOpen)closeProduct();else if(guestbookOpen)closeGuestbook();else if(catalogOpen)closeCatalog();}
+  if(e.code==='KeyM'&&active&&!modalOpen&&!guestbookOpen){roomOpen?closeRooms():openRooms();return}
+  if(e.code==='KeyE'&&!modalOpen&&!guestbookOpen&&!catalogOpen&&!roomOpen&&active){if(nearestGuestbook)openGuestbook();else if(nearest)openProduct(nearest);else showToast('Bir ürüne veya ziyaretçi defterine yaklaş.');}
+  if(e.code==='Escape'){if(modalOpen)closeProduct();else if(guestbookOpen)closeGuestbook();else if(catalogOpen)closeCatalog();else if(roomOpen)closeRooms();}
  });
  window.addEventListener('keyup',e=>keys.delete(e.code));window.addEventListener('blur',()=>keys.clear());
  // Independent touch joystick with normalized displacement
@@ -464,25 +566,35 @@ function setupWalk(){
  j.addEventListener('pointerup',endJoy);j.addEventListener('pointercancel',endJoy);
 }
 function animate(){
- requestAnimationFrame(animate);const dt=clock.getDelta();navigate(dt);
- camera.rotation.set(pitch,yaw,0,'YXZ');if(!guestbookOpen)updateProximity(dt);refreshNearbyModels(dt);
- if(active&&!modalOpen&&!catalogOpen&&!guestbookOpen){
-  // Museums are still exhibitions; moving sculptures rotate slowly, not fast spinning displays.
-  for(const stand of stands)stand.display.rotation.y+=dt*.16;
+ requestAnimationFrame(animate);
+ const dt=Math.min(clock.getDelta(),.07);
+ // Sekme arka plandayken GPU kullanımını azalt. Mobilde 30 FPS hedefle.
+ if(document.hidden)return;
+ drawAccumulator+=dt;
+ if(mobile&&drawAccumulator<1/30)return;
+ const step=mobile?Math.min(drawAccumulator,.065):dt;drawAccumulator=0;
+ navigate(step);camera.rotation.set(pitch,yaw,0,'YXZ');
+ if(!guestbookOpen&&!roomOpen)updateProximity(step);
+ refreshNearbyModels(step);
+ if(active&&!modalOpen&&!catalogOpen&&!guestbookOpen&&!roomOpen){
+  for(const stand of stands)stand.display.rotation.y+=step*.15;
+  for(const art of museumObjects){art.ring.rotation.y+=step*.27;art.ring2.rotation.x+=step*.11;art.knot.rotation.y-=step*.24}
  }
- if(!modalOpen&&!catalogOpen&&!guestbookOpen)renderer.render(scene,camera);
+ if(!modalOpen&&!catalogOpen&&!guestbookOpen&&!roomOpen)renderer.render(scene,camera);
 }
 async function init(){
  try{
-  renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'default'});
-  renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1.05:1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;
-  renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.7;
+  renderer=new THREE.WebGLRenderer({antialias:!mobile,powerPreference:mobile?'low-power':'default'});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1:1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;
+  renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.47;
   renderer.setSize(innerWidth,innerHeight);$('museumCanvas').append(renderer.domElement);
-  clock=new THREE.Clock();camera=new THREE.PerspectiveCamera(mobile?75:68,innerWidth/innerHeight,.12,100);
+  clock=new THREE.Clock();camera=new THREE.PerspectiveCamera(mobile?75:68,innerWidth/innerHeight,.12,110);
   products=await getProducts();
-  const lastZ=11.4-(Math.max(1,Math.ceil(products.length/2))-1)*7;
-  backZ=Math.min(-21,lastZ-5);galleryLength=21-backZ;galleryCenter=(21+backZ)/2;
-  setEnvironment();resetCamera();buildStands();buildGuestbookStand();renderCatalog();setupWalk();animate();
+  const counts=roomCounts();const maxRows=Math.max(5,counts.art,counts.design);
+  const lastZ=10.1-(maxRows-1)*6.4;
+  backZ=Math.min(-20.8,lastZ-5.15);galleryLength=21-backZ;galleryCenter=(21+backZ)/2;
+  $('artCount').textContent=counts.art+' eser';$('designCount').textContent=counts.design+' eser';
+  setEnvironment();resetCamera();buildStands();buildGuestbookStand();renderCatalog();setupWalk();animate();updateRoomIndicator();
   $('loadingScreen').remove();
   window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);fitViewer()});
  }catch(e){console.error(e);$('loadingScreen').innerHTML='<div>3D müze açılamadı.</div><div style="font:12px Arial;color:#c6ad8e;letter-spacing:0">Tarayıcında WebGL desteğini ve internet bağlantını kontrol et.</div>'}
@@ -494,11 +606,13 @@ function updateMusicButton(){musicButton.textContent=musicEnabled?'♫ Müzik a�
 async function tryPlayMusic(){if(!musicEnabled)return;try{await bgMusic.play();}catch(e){console.warn('Müzik kullanıcı izni bekliyor:',e.message);}}
 musicButton.addEventListener('click',()=>{musicEnabled=!musicEnabled;updateMusicButton();if(musicEnabled)tryPlayMusic();else bgMusic.pause()});
 updateMusicButton();
-$('enterMuseum').addEventListener('click',()=>{$('welcome').hidden=true;active=true;tryPlayMusic();showToast(mobile?'Sol çubukla yürü, sağ tarafta sürükleyerek bak.':'WASD ile yürü, sürükleyerek çevrene bak.');});
+$('enterMuseum').addEventListener('click',()=>{$('welcome').hidden=true;active=true;tryPlayMusic();showToast(mobile?'Sol joystick ile yürü, sağdaki boş alanda sürükleyerek bak.':'WASD ile yürü, fareyle bak; M ile salonları aç.');});
 $('openCatalog').addEventListener('click',openCatalog);$('closeCatalog').addEventListener('click',closeCatalog);
-$('shade').addEventListener('click',()=>{closeCatalog();closeProduct();closeGuestbook()});
+$('shade').addEventListener('click',()=>{closeCatalog();closeProduct();closeGuestbook();closeRooms()});
+$('openRooms').addEventListener('click',openRooms);$('closeRooms').addEventListener('click',closeRooms);
+for(const btn of document.querySelectorAll('[data-room]'))btn.addEventListener('click',()=>goRoom(btn.dataset.room));
 $('closeProduct').addEventListener('click',closeProduct);$('closeProduct2').addEventListener('click',closeProduct);
-$('resetPosition').addEventListener('click',resetCamera);$('interactMobile').addEventListener('click',()=>{if(nearestGuestbook)openGuestbook();else if(nearest)openProduct(nearest)});
+$('resetPosition').addEventListener('click',()=>{resetCamera();lastRoom='';updateRoomIndicator();showToast('Giriş lobisine döndün.');});$('interactMobile').addEventListener('click',()=>{if(nearestGuestbook)openGuestbook();else if(nearest)openProduct(nearest)});
 $('openGuestbook').addEventListener('click',openGuestbook);$('closeGuestbook').addEventListener('click',closeGuestbook);
 $('mode3d').addEventListener('click',()=>selectViewerMode(false));$('modePhotos').addEventListener('click',()=>selectViewerMode(true));
 $('loadMoreProductReviews').addEventListener('click',()=>currentProduct&&loadProductReviews(currentProduct,false));

@@ -93,3 +93,74 @@
  .museum-book-modal.open{transform:translateY(0)}
  .admin-review-management{margin-top:30px}
 }
+
+/* V5 · ThreeDee Premium Museum – only the museum-facing surfaces are changed. */
+.museum-body{background:#172329}
+.museum-top{padding-top:20px;background:linear-gradient(180deg,rgba(9,20,25,.88),rgba(9,20,25,.15) 82%,transparent)}
+.museum-top-right{align-items:center;gap:9px}
+.museum-top .hud-pill{border-color:rgba(220,226,223,.3);background:rgba(16,33,38,.72);font-weight:700;letter-spacing:.3px;transition:background .18s,border-color .18s}
+.museum-top .hud-pill:hover{background:rgba(31,57,62,.93);border-color:#dac38e}
+.rooms-top-btn{background:rgba(201,179,129,.18)!important;border-color:rgba(224,194,135,.55)!important}
+.museum-hud-left{top:43%;padding:20px 21px;border-left:2px solid rgba(207,177,115,.7);background:linear-gradient(90deg,rgba(11,26,30,.71),transparent);border-radius:0 12px 12px 0;max-width:280px}
+.museum-hud-left .hud-label{letter-spacing:2.2px;color:#e3c590;font-size:9px}
+.museum-hud-left .hud-heading{font-family:Manrope,Arial,sans-serif;font-size:22px;line-height:1.28;font-weight:750;letter-spacing:-.7px}
+.museum-hud-left .hud-sub{margin-top:9px;font-size:11px;letter-spacing:.25px;color:#d3dedc}
+.hud-mini{margin-top:14px;font-size:9px;letter-spacing:.65px;color:#c7ac84}
+.floor-hint{background:rgba(15,31,36,.82);border-color:rgba(202,184,143,.5);color:#f6f5ea;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+.museum-tools .round-text-btn{background:rgba(15,34,39,.86);border-color:rgba(214,223,222,.33)}
+.welcome-overlay{background:linear-gradient(105deg,rgba(8,21,28,.94),rgba(11,26,33,.69) 64%,rgba(7,21,26,.5))}
+.welcome-panel{border:1px solid rgba(228,209,171,.18);border-radius:24px;padding:46px 33px;background:rgba(10,26,31,.35);backdrop-filter:blur(13px);box-shadow:0 36px 110px #030b1040}
+.welcome-kicker{color:#d7bd8a;letter-spacing:2.6px}
+.welcome-panel h1{font-weight:400}
+.welcome-panel h1 em{color:#edc990}
+.primary-btn{background:#e0c794;border-radius:6px}
+.room-panel{position:fixed;z-index:16;right:0;top:0;bottom:0;width:min(420px,100%);display:flex;flex-direction:column;transform:translateX(105%);transition:transform .3s cubic-bezier(.2,.8,.2,1);background:#f1f0e9;color:#1e2a30;box-shadow:-25px 0 95px #0008;overflow-y:auto}
+.room-panel.open{transform:translateX(0)}
+.room-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:38px 28px 22px;border-bottom:1px solid #c8c7bd}
+.room-panel-head small{color:#9d8557;font-size:10px;font-weight:800;letter-spacing:2px}
+.room-panel-head h2{font-family:Georgia,serif;font-weight:400;font-size:42px;margin:9px 0 7px}
+.room-panel-head p{font-size:12px;color:#65716e;margin:0;line-height:1.5}
+.room-current{padding:16px 28px;background:#e6e7e0;color:#807759;font-size:9px;letter-spacing:1px;display:flex;flex-direction:column;gap:5px}
+.room-current strong{font-size:13px;color:#2a3b3c;letter-spacing:.3px}
+.room-list{display:flex;flex-direction:column;padding:16px 20px;gap:8px}
+.room-choice{width:100%;border:1px solid #ced0ca;background:#fffefa;color:#263437;border-radius:10px;text-align:left;padding:15px 14px;display:flex;gap:13px;align-items:flex-start;transition:background .15s,border-color .15s,transform .15s}
+.room-choice:hover,.room-choice:focus-visible{background:#f4efe3;border-color:#b99c65;transform:translateX(-2px)}
+.room-number{border:1px solid #bfa877;color:#947947;font-family:Georgia,serif;display:grid;place-items:center;min-width:35px;height:35px;border-radius:8px;font-size:16px}
+.room-choice-copy{display:flex;flex:1;gap:5px;flex-direction:column}
+.room-choice-copy strong{font-weight:800;font-size:13px;line-height:1.5}
+.room-choice-copy small{font-size:10px;line-height:1.55;color:#73807c}
+.room-choice-copy em{font-size:10px;color:#a08753;font-style:normal;font-weight:800}
+.room-arrow{color:#967c4c;font-size:21px;line-height:1.6}
+.room-panel-foot{margin:auto 26px 25px;padding-top:15px;border-top:1px solid #ccc9bd;font-size:11px;line-height:1.6;color:#717b77}
+@media(max-width:780px){
+ .museum-top{padding:10px 12px;height:69px}
+ .museum-top-right{gap:5px}
+ .museum-top .hud-pill{padding:9px 9px;border-radius:9px;font-size:10px;white-space:nowrap}
+ .museum-top .rooms-top-btn{font-size:10px}
+ .museum-hud-left{left:12px;top:110px;padding:10px 12px;max-width:188px}
+ .museum-hud-left .hud-heading{font-size:15px;line-height:1.28}
+ .museum-hud-left .hud-label{font-size:7px;letter-spacing:1.2px;margin-bottom:6px}
+ .museum-hud-left .hud-sub{font-size:9px;margin-top:5px}
+ .museum-hud-left .hud-mini{display:none}
+ .museum-bottom{top:75px;right:8px;left:auto;padding:4px 7px}
+ .floor-hint{bottom:147px;max-width:78%;font-size:10px;padding:9px 13px}
+ .joystick{left:clamp(12px,5vw,27px);bottom:max(20px,env(safe-area-inset-bottom));}
+ .joystick-ring{width:116px;height:116px;border-color:#d7c69e90;background:#152e35a6}
+ .joystick-knob{background:#c5b18aae;border-color:#e9d6a7}
+ .mobile-interact{right:16px;bottom:max(55px,calc(env(safe-area-inset-bottom) + 40px));}
+ .welcome-panel{max-width:94vw;padding:27px 18px;border-radius:13px}
+ .welcome-panel h1{font-size:clamp(36px,10vw,56px)}
+ .room-panel-head{padding:27px 21px 20px}
+ .room-panel-head h2{font-size:36px}
+ .room-list{padding:12px 13px}
+ .room-choice{padding:12px}
+}
+@media(max-width:395px){
+ .museum-top .rooms-top-btn{font-size:0;padding:9px 11px}
+ .museum-top .rooms-top-btn:before{content:'⌘';font-size:17px}
+ .museum-top .guestbook-top-btn{font-size:0;padding:9px 10px}
+ .museum-top .guestbook-top-btn:before{content:'✎';font-size:16px}
+ .museum-top .hud-pill#openCatalog{font-size:0;padding:9px 9px}
+ .museum-top .hud-pill#openCatalog span{font-size:16px;margin:0}
+}
+@media(prefers-reduced-motion:reduce){.room-panel,.room-choice{transition:none}}
