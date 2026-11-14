@@ -26,7 +26,7 @@ async function refresh(){products=await api('/api/admin/products');
   const ico=document.createElement('span');ico.className='admin-product-icon';ico.textContent=icons[p.shape]||'◈';ico.style.color=p.color;
   const title=document.createElement('div');title.style.flex='1';
   const name=document.createElement('div');name.className='admin-product-name';name.textContent=p.name;
-  const sub=document.createElement('div');sub.className='admin-product-sub';sub.textContent=p.modelUrl?`${p.format.toUpperCase()} modeli yüklü`:'Temsili 3D model';
+  const sub=document.createElement('div');sub.className='admin-product-sub';sub.textContent=p.previewError?'Önizleme sorunlu · düzenlemek için dokun':p.modelUrl?`${p.format.toUpperCase()} modeli hazır`:'Temsili 3D model';
   const status=document.createElement('span');status.className='admin-status'+(p.active?'':' off');status.textContent=p.active?'Sergide':'Gizli';
   title.append(name,sub,status);
   const mid=document.createElement('div');mid.className='admin-product-mid';
@@ -43,7 +43,7 @@ function openEditor(p=null){
  $('name').value=p?.name||'';$('price').value=p?.price??299;$('stock').value=p?.stock??1;
  $('description').value=p?.description||'';$('shape').value=p?.shape||'abstract';$('color').value=p?.color||'#bba68b';$('active').checked=p?.active??true;
  $('editorTitle').textContent=p?'Ürünü düzenle':'Yeni ürün ekle';
- $('existingFile').textContent=p?.modelUrl?`Yüklü dosya: ${p.format.toUpperCase()} · Değiştirmek için yeni bir dosya seç.`:'Henüz model dosyası yok; temsili model gösterilecektir.';
+ $('existingFile').textContent=p?.previewError?`⚠ ${p.previewError} · Yeni dosya seçerek değiştirebilirsin.`:p?.modelUrl?`Yüklü dosya: ${p.format.toUpperCase()} · Değiştirmek için yeni bir dosya seç.`:'Henüz model dosyası yok; temsili model gösterilecektir.';
  $('fileLabel').textContent='3MF, GLB veya STL seç';$('deleteProduct').hidden=!p;$('editorMessage').textContent='';
  $('adminShade').hidden=false;$('editor').classList.add('open');$('editor').setAttribute('aria-hidden','false');
 }
@@ -69,14 +69,15 @@ for(const type of ['dragenter','dragover'])drop.addEventListener(type,e=>{e.prev
 for(const type of ['dragleave','drop'])drop.addEventListener(type,e=>{e.preventDefault();drop.classList.remove('drag-over')});
 drop.addEventListener('drop',e=>chooseFile(e.dataTransfer?.files?.[0]));
 $('productForm').addEventListener('submit',async e=>{
- e.preventDefault();const btn=$('saveProduct');btn.disabled=true;btn.textContent='Kaydediliyor…';$('editorMessage').textContent='';
+ e.preventDefault();const btn=$('saveProduct');btn.disabled=true;btn.textContent=chosenFile?'3D önizleme hazırlanıyor…':'Kaydediliyor…';$('editorMessage').textContent='';
  const p={name:$('name').value,price:Number($('price').value),stock:Number($('stock').value),description:$('description').value,
  shape:$('shape').value,color:$('color').value,active:$('active').checked};
  const form=new FormData();form.append('payload',JSON.stringify(p));if(chosenFile)form.append('file',chosenFile,chosenFile.name);
  try{
-  if(editing)await api(`/api/admin/products/${editing.id}`,{method:'PUT',body:form});
-  else await api('/api/admin/products',{method:'POST',body:form});
-  closeEditor();await refresh();toast(editing?'Ürün güncellendi, müzede yayınlandı.':'Ürün eklendi, müzede yayınlandı.');
+  let result;
+  if(editing)result=await api(`/api/admin/products/${editing.id}`,{method:'PUT',body:form});
+  else result=await api('/api/admin/products',{method:'POST',body:form});
+  closeEditor();await refresh();toast(result.previewError?'Ürün kaydedildi ancak model önizlemesi oluşturulamadı. Ürünü düzenleyerek optimize model yükleyin.':editing?'Ürün güncellendi ve müzede yayınlandı.':'Ürün eklendi ve müzede yayınlandı.');
  }catch(err){$('editorMessage').textContent=err.message}finally{btn.disabled=false;btn.textContent='Kaydet ve yayınla →'}
 });
 $('deleteProduct').addEventListener('click',async()=>{

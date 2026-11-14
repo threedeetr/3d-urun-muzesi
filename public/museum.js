@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
 const $ = id => document.getElementById(id);
 const money = n => new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',maximumFractionDigits:2}).format(Number(n)||0);
 const mobile = matchMedia('(pointer:coarse)').matches;
 const colors = { gold: 0xbfa477, dark: 0x212a27, wall: 0x45524d, floor: 0x67675c, cream: 0xd9cdb7 };
+// Ürün dosyalarının yalnızca sunucuda küçültülmüş GLB önizlemesini işler.
 const models = new Map();
+const MAX_VISIBLE_PREVIEWS = mobile ? 2 : 4;
+let proximityRefresh = 0;
 let products=[], scene, camera, renderer, clock, museumObjects=[], stands=[], colliders=[], nearest=null;
 let backZ=-21, galleryLength=42, galleryCenter=0;
 let viewerRenderer, viewerScene, viewerCamera, viewerControl, viewerContent, viewerFrame=0, currentProduct=null;
@@ -79,7 +80,11 @@ function setEnvironment(){
  // Gold-trimmed doorway and central sign
  for(const x of [-3.8,3.8]){box(.45,7.8,.6,bronze,x,3.9,20.58)}
  box(8.1,.33,.65,bronze,0,7.85,20.58);
- surfaceFrame(0,4.2,backZ+.38,8.5,3.1,0,'MÜZE 3D','TASARIM   ·   MERAK   ·   KOLEKSİYON');
+ surfaceFrame(0,4.2,backZ+.38,8.5,3.1,0,'THREEDEE','TASARIM   ·   MERAK   ·   KOLEKSİYON');
+ // Müzede girişin karşısında da aynı marka logosu sergilenir.
+ const logoTexture=new THREE.TextureLoader().load('/threedee-logo.webp');logoTexture.colorSpace=THREE.SRGBColorSpace;
+ const brandSign=new THREE.Mesh(new THREE.PlaneGeometry(4.35,2.75),new THREE.MeshBasicMaterial({map:logoTexture,transparent:false}));
+ brandSign.position.set(0,4.2,backZ+.555);scene.add(brandSign);
  surfaceFrame(-13.51,4.15,1.5,3.9,2.15,Math.PI/2,'YAKINDAN','Her ayrıntıyı keşfet');
  surfaceFrame(13.51,4.15,-6,3.9,2.15,-Math.PI/2,'DÖNDÜR','Üç boyutlu deneyim');
  // Decorative side wall insets
@@ -120,18 +125,14 @@ function buildStands(){
   const labelGroup=new THREE.Group();labelGroup.position.set(0,.68,pos.x<0?1.47:1.47);pedestal.add(labelGroup);
   box(1.82,.73,.08,gold,0,0,0,labelGroup);
   const label=mesh(new THREE.PlaneGeometry(1.75,.68),new THREE.MeshBasicMaterial({map:txtCanvas(p.name,money(p.price),600,380,'item')}),[0,0,.048],labelGroup);
-  // Label and plinth clickable, too
-  pedestal.traverse(o=>{if(o.isMesh&&o!==glass){o.userData.productId=p.id;museumObjects.push(o)}});
-  stands.push({p,pos,pedestal,display,loading:true});
-  loadDisplay(p).then(obj=>{
-    display.add(obj);obj.position.y=0.04;
-    obj.traverse(o=>{if(o.isMesh){o.userData.productId=p.id;museumObjects.push(o)}});
-  }).catch(err=>{
-    console.warn('Model yüklenemedi:',p.name,err);
-    const fallback=normalized(demoModel({...p,shape:'abstract'}));display.add(fallback);
-  });
-  // Warm highlight above the piece
-  const spot=new THREE.SpotLight(0xffe3b6,17,10,Math.PI/3,1.0,1.2);spot.position.set(pos.x,7.1,pos.z);spot.target=pedestal;scene.add(spot);
+  // Heykeller ilk yüklemede ağır modelleri açmaz. Önce hafif temsili siluet görünür.
+  pedestal.userData.productId=p.id;
+  const placeholder=normalized(demoModel(p.modelUrl?{...p,shape:'abstract'}:p));
+  display.add(placeholder);placeholder.position.y=.04;
+  stands.push({p,pos,pedestal,display,placeholder,actual:null,loading:false,failed:false});
+  // Telefonda onlarca dinamik Spotlight GPU kullanımını şişiriyordu; statik vurgulara geçildi.
+  const glow=material(0xd7ad70,.18,.45);glow.emissive.setHex(0x3f2911);glow.emissiveIntensity=.4;
+  const accent=cyl(1.32,1.33,.025,glow,0,1.31,0,pedestal,24);
   colliders.push({x:pos.x,z:pos.z,r:1.45});
  }
 }
@@ -200,17 +201,47 @@ function normalized(raw){
 }
 async function loadDisplay(p){
  if(!p.modelUrl)return normalized(demoModel(p));
- if(!models.has(p.id))models.set(p.id,(async()=>{
-  const response=await fetch(p.modelUrl);if(!response.ok)throw new Error('Dosya indirilemedi: '+response.status);
-  const data=await response.arrayBuffer();let raw;
-  if(p.format==='3mf') {raw=new ThreeMFLoader().parse(data);raw.rotation.x=-Math.PI/2;}
-  else if(p.format==='stl'){const geom=new STLLoader().parse(data);geom.computeVertexNormals();raw=new THREE.Group();const m=new THREE.Mesh(geom,material(p.color||'#bca78e',.21,.53));m.rotation.x=-Math.PI/2;raw.add(m);}
-  else if(p.format==='glb'){raw=(await new GLTFLoader().parseAsync(data,'')).scene;}
-  else throw new Error('Desteklenmeyen format.');
+ // Eski ağır 3MF/STL dosyaları hiçbir zaman istemcide ayrıştırılmaz.
+ const url=p.previewUrl || (p.format==='glb' ? p.modelUrl : null);
+ if(!url)throw new Error(p.previewError||'3MF/STL için hafif önizleme bulunamadı.');
+ const key=p.id+':'+url;
+ if(!models.has(key))models.set(key,(async()=>{
+  const response=await fetch(url,{cache:'force-cache',signal:AbortSignal.timeout(15000)});
+  if(!response.ok)throw new Error('Model indirilirken sorun oluştu: '+response.status);
+  const len=Number(response.headers.get('Content-Length')||0);
+  if(len>7*1024*1024)throw new Error('Bu GLB modeli telefon için çok büyük; optimize model yükle.');
+  const data=await response.arrayBuffer();
+  if(data.byteLength>7*1024*1024)throw new Error('GLB önizlemesi fazla büyük.');
+  const raw=(await new GLTFLoader().parseAsync(data,'')).scene;
+  if(!raw)throw new Error('GLB geometrisi okunamadı.');
+  if(p.format==='3mf'||p.format==='stl'){
+   raw.traverse(o=>{if(o.isMesh&&o.material){const mats=Array.isArray(o.material)?o.material:[o.material];for(const m of mats){if(m.color)m.color.set(p.color||'#bca78e')}}});
+  }
   return normalized(raw);
  })());
- try{return (await models.get(p.id)).clone(true)}catch(e){models.delete(p.id);throw e;}
+ try{return (await models.get(key)).clone(true)}catch(e){models.delete(key);throw e;}
 }
+// Galeri içinde yalnızca yakındaki modeller yüklenir. Uzaklaşınca gölge/siluet geri gelir.
+function refreshNearbyModels(dt){
+ if(!active||modalOpen||catalogOpen)return;
+ proximityRefresh+=dt;if(proximityRefresh<.8)return;proximityRefresh=0;
+ const near=stands.filter(s=>s.p.modelUrl&&s.p.previewUrl).map(s=>({s,d:Math.hypot(camera.position.x-s.pos.x,camera.position.z-s.pos.z)})).sort((a,b)=>a.d-b.d);
+ const visible=new Set(near.filter(x=>x.d<12).slice(0,MAX_VISIBLE_PREVIEWS).map(x=>x.s));
+ for(const stand of stands){
+  if(!stand.p.modelUrl)continue;
+  if(!visible.has(stand)){
+   if(stand.actual){stand.display.remove(stand.actual);stand.actual=null;stand.display.add(stand.placeholder)}
+   continue;
+  }
+  if(stand.actual||stand.loading||stand.failed)continue;
+  stand.loading=true;
+  loadDisplay(stand.p).then(obj=>{
+   if(!visible.has(stand)||!stand.pedestal.parent)return;
+   stand.display.remove(stand.placeholder);obj.position.y=.04;stand.display.add(obj);stand.actual=obj;
+  }).catch(err=>{stand.failed=true;console.warn('Yakın sergi önizlemesi:',stand.p.name,err.message)}).finally(()=>{stand.loading=false});
+ }
+}
+
 function showToast(message){const el=$('toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),3500)}
 async function getProducts(){const r=await fetch('/api/products',{cache:'no-store'});if(!r.ok)throw new Error('Ürünler alınamadı.');return r.json()}
 function renderCatalog(){
@@ -234,7 +265,7 @@ function initViewer(){
  const el=$('productViewer');viewerScene=new THREE.Scene();viewerScene.background=new THREE.Color(0xd9d8c9);
  viewerCamera=new THREE.PerspectiveCamera(39,1,.05,100);viewerCamera.position.set(3.6,2.6,4.6);
  viewerRenderer=new THREE.WebGLRenderer({alpha:false,antialias:true,powerPreference:'default'});
- viewerRenderer.setPixelRatio(Math.min(window.devicePixelRatio,1.6));viewerRenderer.outputColorSpace=THREE.SRGBColorSpace;
+ viewerRenderer.setPixelRatio(Math.min(window.devicePixelRatio,mobile?1.05:1.4));viewerRenderer.outputColorSpace=THREE.SRGBColorSpace;
  viewerRenderer.toneMapping=THREE.ACESFilmicToneMapping;viewerRenderer.toneMappingExposure=1.65;
  el.append(viewerRenderer.domElement);
  viewerControl=new OrbitControls(viewerCamera,viewerRenderer.domElement);
@@ -260,7 +291,7 @@ async function openProduct(p){
  $('productFormat').textContent=p.format?.toUpperCase()||'Temsili 3D model';$('sampleNote').hidden=!p.isDemo;
  if(!viewerRenderer)initViewer();
  viewerContent.clear();viewerCamera.position.set(3.6,2.6,4.6);viewerControl.target.set(0,1,0);viewerControl.update();
- $('viewerLoading').hidden=false;$('viewerLoading').textContent='Model yükleniyor…';
+ $('viewerLoading').hidden=false;$('viewerLoading').textContent=p.previewError?'Önizleme hazırlanamadı. Temsili model gösterilecek.':'Model yükleniyor…';
  setTimeout(fitViewer,60);const ticket=++loadTicket;
  try{const obj=await loadDisplay(p);if(ticket!==loadTicket)return;obj.position.y=.31;viewerContent.add(obj);$('viewerLoading').hidden=true;}
  catch(err){console.warn(err);if(ticket!==loadTicket)return;viewerContent.add(normalized(demoModel({...p,shape:'abstract'})));$('viewerLoading').textContent='Model açılmadı, temsili görünüm gösteriliyor.';}
@@ -312,8 +343,9 @@ function setupWalk(){
   const p=pointer;pointer=null;if(p.total>12)return;
   const mouse=new THREE.Vector2(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);
   raycaster.setFromCamera(mouse,camera);
-  const matches=raycaster.intersectObjects(museumObjects,false);
-  const id=matches[0]?.object?.userData?.productId;
+  const matches=raycaster.intersectObjects(stands.map(s=>s.pedestal),true);
+  let hit=matches[0]?.object;while(hit&&!hit.userData.productId)hit=hit.parent;
+  const id=hit?.userData?.productId;
   if(id)openProduct(products.find(x=>x.id===id));
  });
  c.addEventListener('pointercancel',()=>pointer=null);
@@ -335,17 +367,17 @@ function setupWalk(){
 }
 function animate(){
  requestAnimationFrame(animate);const dt=clock.getDelta();navigate(dt);
- camera.rotation.set(pitch,yaw,0,'YXZ');updateProximity(dt);
+ camera.rotation.set(pitch,yaw,0,'YXZ');updateProximity(dt);refreshNearbyModels(dt);
  if(active&&!modalOpen&&!catalogOpen){
   // Museums are still exhibitions; moving sculptures rotate slowly, not fast spinning displays.
   for(const stand of stands)stand.display.rotation.y+=dt*.16;
  }
- renderer.render(scene,camera);
+ if(!modalOpen&&!catalogOpen)renderer.render(scene,camera);
 }
 async function init(){
  try{
   renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'default'});
-  renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1.35:1.8));renderer.outputColorSpace=THREE.SRGBColorSpace;
+  renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1.05:1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.7;
   renderer.setSize(innerWidth,innerHeight);$('museumCanvas').append(renderer.domElement);
   clock=new THREE.Clock();camera=new THREE.PerspectiveCamera(mobile?75:68,innerWidth/innerHeight,.12,100);
@@ -357,7 +389,14 @@ async function init(){
   window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);fitViewer()});
  }catch(e){console.error(e);$('loadingScreen').innerHTML='<div>3D müze açılamadı.</div><div style="font:12px Arial;color:#c6ad8e;letter-spacing:0">Tarayıcında WebGL desteğini ve internet bağlantını kontrol et.</div>'}
 }
-$('enterMuseum').addEventListener('click',()=>{$('welcome').hidden=true;active=true;showToast(mobile?'Sol çubukla yürü, sağ tarafta sürükleyerek bak.':'WASD ile yürü, sürükleyerek çevrene bak.');});
+const bgMusic=$('classicalAmbience'),musicButton=$('toggleMusic');
+bgMusic.volume=.21;
+let musicEnabled=true;
+function updateMusicButton(){musicButton.textContent=musicEnabled?'♫ Müzik açık':'♪ Müzik kapalı';musicButton.setAttribute('aria-pressed',String(musicEnabled));}
+async function tryPlayMusic(){if(!musicEnabled)return;try{await bgMusic.play();}catch(e){console.warn('Müzik kullanıcı izni bekliyor:',e.message);}}
+musicButton.addEventListener('click',()=>{musicEnabled=!musicEnabled;updateMusicButton();if(musicEnabled)tryPlayMusic();else bgMusic.pause()});
+updateMusicButton();
+$('enterMuseum').addEventListener('click',()=>{$('welcome').hidden=true;active=true;tryPlayMusic();showToast(mobile?'Sol çubukla yürü, sağ tarafta sürükleyerek bak.':'WASD ile yürü, sürükleyerek çevrene bak.');});
 $('openCatalog').addEventListener('click',openCatalog);$('closeCatalog').addEventListener('click',closeCatalog);
 $('shade').addEventListener('click',()=>{closeCatalog();closeProduct()});
 $('closeProduct').addEventListener('click',closeProduct);$('closeProduct2').addEventListener('click',closeProduct);
