@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { Worker } = require('node:worker_threads');
 const cloud = require('./supabase-store.js');
 const commerce = require('./customer-v6.js');
+const chat = require('./chat-v7.js');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -266,6 +267,12 @@ async function handle(req,res){
  const method=req.method || 'GET';const url=new URL(req.url,'http://localhost');const pathname=url.pathname;
  if(['POST','PUT','PATCH','DELETE'].includes(method) && !validOrigin(req))return reply(res,403,{error:'İsteğe izin verilmedi.'});
  if(method==='GET'&&pathname==='/api/health')return reply(res,200,{status:'ok',storage:cloud.enabled?'supabase':'local'});
+ // V7: public museum chat. Messages are checked and persisted by the backend.
+ if(pathname==='/api/chat/messages' && method==='GET')return reply(res,200,await chat.list(url.searchParams.get('after')));
+ if(pathname==='/api/chat/messages' && method==='POST'){
+   const user=await commerce.requireUser(req,res);
+   return reply(res,201,await chat.send(user,req,await readJson(req)));
+ }
  // V6: customer account, favorites, cart, order requests and live visitors.
  if(pathname==='/api/presence' && ['GET','POST'].includes(method)){
   const position=method==='POST'?await readJson(req):null;
@@ -340,6 +347,11 @@ async function handle(req,res){
  }
  if(pathname.startsWith('/api/admin/')){
    if(!auth(req,res))return;
+   if(method==='GET'&&pathname==='/api/admin/chat')return reply(res,200,await chat.adminList());
+   if(method==='DELETE'&&/^\/api\/admin\/chat\/[a-f0-9-]{36}$/.test(pathname))return reply(res,200,await chat.adminDelete(pathname.split('/').pop()));
+   if(method==='POST'&&pathname==='/api/admin/chat/mute'){
+     const data=await readJson(req);return reply(res,200,await chat.adminMute(data.userId,24));
+   }
    if(method==='GET'&&pathname==='/api/admin/orders')return reply(res,200,{orders:await commerce.adminOrders()});
    if(method==='PATCH'&&pathname.match(/^\/api\/admin\/orders\/[a-f0-9-]{36}$/)){
     const id=pathname.split('/').pop(),data=await readJson(req);
@@ -454,7 +466,7 @@ async function handle(req,res){
    if(!/^[a-f0-9-]{36}\.(3mf|glb|stl|jpg|jpeg|png|webp)$/i.test(name))return reply(res,404,{error:'Dosya bulunamadı.'});
    return serveFile(res,path.join(UPLOADS,name),true);
  }
- const routes={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/style.css':'style.css','/museum.js':'museum.js','/admin.js':'admin.js','/shop.js':'shop.js','/checkout.js':'checkout.js','/checkout':'checkout.html','/checkout.html':'checkout.html','/favicon.svg':'favicon.svg','/threedee-logo.webp':'threedee-logo.webp','/classical.ogg':'classical.ogg'};
+ const routes={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/style.css':'style.css','/museum.js':'museum.js','/admin.js':'admin.js','/shop.js':'shop.js','/chat.js':'chat.js','/checkout.js':'checkout.js','/checkout':'checkout.html','/checkout.html':'checkout.html','/favicon.svg':'favicon.svg','/threedee-logo.webp':'threedee-logo.webp','/classical.ogg':'classical.ogg'};
  if(routes[pathname])return serveFile(res,path.join(PUBLIC,routes[pathname]));
  return reply(res,404,{error:'Sayfa bulunamadı.'});
 }
