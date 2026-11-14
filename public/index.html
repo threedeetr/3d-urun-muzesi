@@ -50,6 +50,18 @@
 </aside>
 <section id="shopAuthPanel" class="shop-auth" role="dialog" aria-label="Müşteri hesabı" aria-modal="true" hidden><div class="shop-auth-box"><button id="authClose" class="shop-auth-close" type="button">✕</button><img src="/threedee-logo.webp" alt="ThreeDee" width="112"><div class="shop-auth-kicker">THREEDEE MÜŞTERİ HESABI</div><h2 id="authHeading">Hesabına giriş yap</h2><p>Sepetini ve favorilerini tüm cihazlarında sakla.</p><form id="shopAuthForm"><div id="authNameWrap" hidden><label for="authName">Adın / takma adın</label><input id="authName" autocomplete="nickname" minlength="2" maxlength="25" placeholder="Müzedeki görünen adın"></div>
 <label for="authEmail">E-posta adresi</label><input id="authEmail" type="email" autocomplete="email" required placeholder="ornek@posta.com"><label for="authPassword">Şifre (en az 8 karakter)</label><input id="authPassword" type="password" minlength="8" autocomplete="current-password" required placeholder="Şifren"><div id="authFeedback" class="shop-auth-feedback" aria-live="polite"></div><button id="authSubmit" class="shop-auth-submit" type="submit">Giriş yap</button></form><button id="authSwitch" class="shop-auth-switch" type="button">Hesabın yok mu? Kayıt ol</button></div></section>
+<button id="chatToggle" class="chat-toggle" type="button" aria-controls="chatPanel" aria-expanded="false">✉ <span>Sohbet</span><b id="chatUnread" hidden>•</b></button>
+<section id="chatPanel" class="chat-panel" role="region" aria-label="Müze canlı sohbeti" hidden>
+  <div class="chat-head"><div><small>THREEDEE / ZİYARETÇİLER</small><h2>Canlı sohbet</h2><p>Herkesle aynı müze odasında konuş.</p></div><button id="chatClose" type="button" aria-label="Sohbeti kapat">✕</button></div>
+  <div class="chat-guidelines">Saygılı konuş · Küfür ve spam yasak · Bağlantı paylaşma</div>
+  <div id="chatMessages" class="chat-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+  <div class="chat-compose">
+    <div id="chatFeedback" class="chat-feedback" role="status"></div>
+    <form id="chatForm" class="chat-form"><label class="sr-only" for="chatInput">Mesajın</label><input id="chatInput" type="text" maxlength="240" autocomplete="off" placeholder="Mesaj yaz... (240 karakter)" required><button id="chatSend" type="submit">Gönder ↗</button></form>
+    <button id="chatSignIn" class="chat-signin" type="button" hidden>Mesaj yazmak için giriş yap →</button>
+  </div>
+</section>
 <div id="toast" class="toast" aria-live="polite"></div>
 <script type="module" src="/museum.js"></script>
+<script src="/chat.js" defer></script>
 </body></html>

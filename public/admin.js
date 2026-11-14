@@ -20,7 +20,7 @@ async function refresh(){products=await api('/api/admin/products');
  $('activeCount').textContent=products.filter(p=>p.active).length;
  $('modelCount').textContent=products.filter(p=>p.modelUrl).length;
  const list=$('adminProductList');list.replaceChildren();
- if(!products.length){const empty=document.createElement('p');empty.textContent='Henüz ürün eklenmedi. Yeni ürün ekle butonuyla başlayabilirsin.';list.append(empty);await loadAdminReviews();await loadAdminOrders();return}
+ if(!products.length){const empty=document.createElement('p');empty.textContent='Henüz ürün eklenmedi. Yeni ürün ekle butonuyla başlayabilirsin.';list.append(empty);await loadAdminReviews();await loadAdminOrders();await loadAdminChat();return}
  for(const p of products){
   const row=document.createElement('div');row.className='admin-product-row';row.tabIndex=0;row.setAttribute('role','button');
   const ico=document.createElement('span');ico.className='admin-product-icon';ico.style.color=p.color;
@@ -38,7 +38,7 @@ async function refresh(){products=await api('/api/admin/products');
   row.append(ico,title,mid,arrow);row.addEventListener('click',()=>openEditor(p));row.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openEditor(p)}});
   list.append(row);
  }
- await loadAdminReviews();await loadAdminOrders();
+ await loadAdminReviews();await loadAdminOrders();await loadAdminChat();
 }
 function openEditor(p=null){
  editing=p;chosenFile=null;chosenPhotos=[];retainedPhotos=new Set(p?.photos||[]);clearPhotoPreviews();$('productForm').reset();$('modelFile').value='';$('photoFiles').value='';
@@ -158,4 +158,29 @@ $('deleteProduct').addEventListener('click',async()=>{
  catch(err){$('editorMessage').textContent=err.message}
 });
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeEditor()});
+
+// ThreeDee V7 – admin chat moderation.
+async function loadAdminChat(){
+ const root=$('adminChatList');if(!root)return;
+ root.textContent='Sohbet yükleniyor…';
+ try{
+  const data=await api('/api/admin/chat');root.replaceChildren();
+  if(!data.messages?.length){root.textContent='Henüz sohbet mesajı yok.';return}
+  for(const m of data.messages){
+   const row=document.createElement('article');row.className='admin-chat-row';
+   const header=document.createElement('div');header.className='admin-chat-head';
+   const name=document.createElement('strong');name.textContent=m.nickname||'Ziyaretçi';
+   const date=document.createElement('small');date.textContent=new Date(m.createdAt).toLocaleString('tr-TR');
+   header.append(name,date);
+   const message=document.createElement('p');message.textContent=m.body;
+   const actions=document.createElement('div');actions.className='admin-chat-actions';
+   const remove=document.createElement('button');remove.textContent='Mesajı sil';remove.type='button';
+   remove.onclick=async()=>{if(!confirm('Bu mesaj silinsin mi?'))return;try{await api('/api/admin/chat/'+encodeURIComponent(m.id),{method:'DELETE'});toast('Mesaj silindi.');loadAdminChat()}catch(e){toast(e.message)}};
+   const mute=document.createElement('button');mute.textContent='24 saat sustur';mute.type='button';
+   mute.onclick=async()=>{if(!confirm((m.nickname||'Ziyaretçi')+' adlı kullanıcının mesaj yazmasını 24 saat engelle?'))return;try{await api('/api/admin/chat/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:m.userId})});toast('Kullanıcı 24 saat susturuldu.');loadAdminChat()}catch(e){toast(e.message)}};
+   actions.append(remove,mute);row.append(header,message,actions);root.append(row);
+  }
+ }catch(e){root.textContent=e.message}
+}
+$('refreshChat')?.addEventListener('click',loadAdminChat);
 checkLogin();
