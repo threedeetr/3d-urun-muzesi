@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { Worker } = require('node:worker_threads');
 const cloud = require('./supabase-store.js');
+const commerce = require('./customer-v6.js');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -265,6 +266,46 @@ async function handle(req,res){
  const method=req.method || 'GET';const url=new URL(req.url,'http://localhost');const pathname=url.pathname;
  if(['POST','PUT','PATCH','DELETE'].includes(method) && !validOrigin(req))return reply(res,403,{error:'İsteğe izin verilmedi.'});
  if(method==='GET'&&pathname==='/api/health')return reply(res,200,{status:'ok',storage:cloud.enabled?'supabase':'local'});
+ // V6: customer account, favorites, cart, order requests and live visitors.
+ if(pathname==='/api/presence' && ['GET','POST'].includes(method)){
+  const position=method==='POST'?await readJson(req):null;
+  return reply(res,200,commerce.presence(req,res,position));
+ }
+ if(pathname==='/api/customer/session'&&method==='GET'){
+  const user=commerce.enabled?await commerce.findUser(req,res):null;
+  return reply(res,200,{authenticated:!!user,user:user||null});
+ }
+ if(pathname==='/api/customer/register'&&method==='POST')return reply(res,200,await commerce.authCall(req,res,'register',await readJson(req)));
+ if(pathname==='/api/customer/login'&&method==='POST')return reply(res,200,await commerce.authCall(req,res,'login',await readJson(req)));
+ if(pathname==='/api/customer/logout'&&method==='POST'){
+  commerce.clearSession(req,res);return reply(res,200,{ok:true});
+ }
+ if(pathname.startsWith('/api/customer/') ){
+  const user=await commerce.requireUser(req,res);
+  if(pathname==='/api/customer/favorites'){
+   if(method==='GET')return reply(res,200,{ids:await commerce.favorites(user.id)});
+   if(method==='POST'){
+    const data=await readJson(req),id=String(data.id||'');
+    if(!/^[a-z0-9-]{1,90}$/i.test(id))return reply(res,400,{error:'Ürün bulunamadı.'});
+    if(data.active===true){const rows=await loadProducts();if(!rows.some(p=>p.id===id&&p.active))return reply(res,404,{error:'Ürün bulunamadı.'})}
+    await commerce.favorite(user.id,id,data.active===true);return reply(res,200,{ok:true});
+   }
+  }
+  if(pathname==='/api/customer/cart'){
+   if(method==='GET')return reply(res,200,{items:await commerce.cart(user.id)});
+   if(method==='POST'){
+    const data=await readJson(req),id=String(data.id||''),quantity=Number(data.quantity);
+    if(!/^[a-z0-9-]{1,90}$/i.test(id)||!Number.isInteger(quantity)||quantity<0||quantity>30)return reply(res,400,{error:'Ürün veya adet geçersiz.'});
+    if(quantity){const rows=await loadProducts(),product=rows.find(p=>p.id===id&&p.active&&!p.isDemo);if(!product)return reply(res,404,{error:'Ürün satışta değil.'});if(quantity>product.stock)return reply(res,409,{error:'Stokta yeterli adet yok.'})}
+    await commerce.setCart(user.id,id,quantity);return reply(res,200,{ok:true});
+   }
+  }
+  if(pathname==='/api/customer/orders'){
+   if(method==='GET')return reply(res,200,{orders:await commerce.orders(user.id)});
+   if(method==='POST')return reply(res,201,{ok:true,order:await commerce.makeOrder(user.id,await readJson(req),await loadProducts())});
+  }
+  return reply(res,404,{error:'Müşteri işlemi bulunamadı.'});
+ }
  if(method==='GET'&&pathname==='/api/products'){
   const products=await loadProducts();const ratings=cloud.enabled?await cloud.ratings():null;
   const reviews=cloud.enabled?null:await loadReviews();
@@ -299,6 +340,11 @@ async function handle(req,res){
  }
  if(pathname.startsWith('/api/admin/')){
    if(!auth(req,res))return;
+   if(method==='GET'&&pathname==='/api/admin/orders')return reply(res,200,{orders:await commerce.adminOrders()});
+   if(method==='PATCH'&&pathname.match(/^\/api\/admin\/orders\/[a-f0-9-]{36}$/)){
+    const id=pathname.split('/').pop(),data=await readJson(req);
+    await commerce.updateOrder(id,data.status);return reply(res,200,{ok:true});
+   }
    if(method==='GET'&&pathname==='/api/admin/products')return reply(res,200,await loadProducts());
    if(method==='GET'&&pathname==='/api/admin/reviews')return reply(res,200,cloud.enabled?await cloud.recentReviews(200):(await loadReviews()).slice(0,200));
    if(method==='GET'&&pathname==='/api/admin/reviews/export')return reply(res,200,await loadReviews());
@@ -408,7 +454,7 @@ async function handle(req,res){
    if(!/^[a-f0-9-]{36}\.(3mf|glb|stl|jpg|jpeg|png|webp)$/i.test(name))return reply(res,404,{error:'Dosya bulunamadı.'});
    return serveFile(res,path.join(UPLOADS,name),true);
  }
- const routes={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/style.css':'style.css','/museum.js':'museum.js','/admin.js':'admin.js','/favicon.svg':'favicon.svg','/threedee-logo.webp':'threedee-logo.webp','/classical.ogg':'classical.ogg'};
+ const routes={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/style.css':'style.css','/museum.js':'museum.js','/admin.js':'admin.js','/shop.js':'shop.js','/checkout.js':'checkout.js','/checkout':'checkout.html','/checkout.html':'checkout.html','/favicon.svg':'favicon.svg','/threedee-logo.webp':'threedee-logo.webp','/classical.ogg':'classical.ogg'};
  if(routes[pathname])return serveFile(res,path.join(PUBLIC,routes[pathname]));
  return reply(res,404,{error:'Sayfa bulunamadı.'});
 }
