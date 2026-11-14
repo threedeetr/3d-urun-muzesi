@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { Worker } = require('node:worker_threads');
+const cloud = require('./supabase-store.js');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -38,14 +39,16 @@ const seed = [
 }));
 if (!fs.existsSync(DB)) fs.writeFileSync(DB, JSON.stringify(seed, null, 2));
 if (!fs.existsSync(REVIEWS_DB)) fs.writeFileSync(REVIEWS_DB, '[]');
-function loadProducts() {
+async function loadProducts() {
+  if(cloud.enabled) return cloud.listProducts();
   try { const x=JSON.parse(fs.readFileSync(DB,'utf8')); return Array.isArray(x) ? x : []; }
   catch (e) { console.error('Ürün verisi okunamadı:',e.message); return []; }
 }
 function saveProducts(rows) {
   const tmp = DB + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(rows, null, 2)); fs.renameSync(tmp, DB);
 }
-function loadReviews(){
+async function loadReviews(){
+ if(cloud.enabled)return cloud.reviewsAll();
  try{const data=JSON.parse(fs.readFileSync(REVIEWS_DB,'utf8'));return Array.isArray(data)?data:[]}
  catch(err){console.error('Yorum verisi okunamadı:',err.message);return []}
 }
@@ -58,7 +61,7 @@ function checkReviewRate(req,scope,productId){const ip=String(req.headers['x-for
  if(now-record.last<60_000||record.history.length>=8)throw Object.assign(new Error('Çok sık yorum gönderiyorsun. Bir süre sonra tekrar dene.'),{status:429});
  record.last=now;record.history.push(now);reviewRate.set(key,record);
 }
-function addReview(req,scope,productId,data){
+async function addReview(req,scope,productId,data){
  if(data.website) return {ok:true}; // Görünmez spam alanı
  const name=String(data.name||'').trim().replace(/\s+/g,' ').slice(0,35);
  const message=String(data.message||'').trim().slice(0,700);
@@ -66,8 +69,15 @@ function addReview(req,scope,productId,data){
  if(/https?:\/\/|www\./i.test(message))throw Object.assign(new Error('Yorumlarda bağlantı paylaşılamaz.'),{status:400});
  let rating=null;if(scope==='product'){rating=Number(data.rating);if(!Number.isInteger(rating)||rating<1||rating>5)throw Object.assign(new Error('1–5 yıldız arasında puan seç.'),{status:400})}
  checkReviewRate(req,scope,productId);
- const rows=loadReviews();if(rows.length>=10000)throw Object.assign(new Error('Yorum defteri dolu; yöneticiye haber ver.'),{status:507});
- const review={id:crypto.randomUUID(),scope,productId:productId||null,name,message,rating,createdAt:new Date().toISOString()};rows.unshift(review);saveReviews(rows);return {ok:true,review};
+ const review={id:crypto.randomUUID(),scope,productId:productId||null,name,message,rating,createdAt:new Date().toISOString()};
+ if(cloud.enabled){
+   // Each comment gets its own DB row, preventing concurrent visitor comments from overwriting each other.
+   await cloud.createReview(review);
+ }else{
+   const rows=await loadReviews();if(rows.length>=10000)throw Object.assign(new Error('Yorum defteri dolu; yöneticiye haber ver.'),{status:507});
+   rows.unshift(review);saveReviews(rows);
+ }
+ return {ok:true,review};
 }
 const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.svg':'image/svg+xml', '.3mf':'model/3mf', '.glb':'model/gltf-binary', '.stl':'model/stl', '.webp':'image/webp', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.png':'image/png', '.ogg':'audio/ogg' };
 function reply(res, code, payload, headers={}) {
@@ -167,12 +177,48 @@ function keepExistingPhotos(data,previous){const existing=Array.isArray(previous
  if(!Array.isArray(data.keepPhotos)||data.keepPhotos.some(u=>!existing.includes(u)))throw Object.assign(new Error('Fotoğraf listesi geçersiz.'),{status:400});
  return [...new Set(data.keepPhotos)];
 }
-function safeDeleteUrl(url){
+async function safeDeleteUrl(url){
+ if(cloud.enabled && cloud.objectRef(url)){
+  try{await cloud.deleteObject(url)}catch(err){console.warn('Bulut dosyası silinemedi:',err.message)}
+  return;
+ }
  if(typeof url==='string' && /^\/uploads\/[a-f0-9-]{36}\.(3mf|glb|stl|jpg|jpeg|png|webp)$/i.test(url)){
   try{fs.unlinkSync(path.join(UPLOADS,path.basename(url)))}catch{}
  }
 }
-function removeUpload(product){safeDeleteUrl(product?.modelUrl);safeDeleteUrl(product?.previewUrl);for(const url of product?.photos||[])safeDeleteUrl(url);}
+async function removeUpload(product){await Promise.all([product?.modelUrl,product?.previewUrl,...(product?.photos||[])].filter(Boolean).map(safeDeleteUrl));}
+const MIME={'.3mf':'model/3mf','.stl':'model/stl','.glb':'model/gltf-binary','.jpeg':'image/jpeg','.jpg':'image/jpeg','.png':'image/png','.webp':'image/webp'};
+async function promoteModel(upload,preview){
+ if(!cloud.enabled || !upload)return {...(upload?{modelUrl:upload.modelUrl,format:upload.format}:{}),...preview};
+ const localFiles=[upload.modelUrl,preview.previewUrl].filter(Boolean);
+ const created=[];
+ try{
+  const originalPath=path.join(UPLOADS,path.basename(upload.modelUrl));
+  const modelUrl=await cloud.uploadObject(cloud.ORIGINALS,path.basename(upload.modelUrl),fs.readFileSync(originalPath),MIME[path.extname(originalPath)]);
+  created.push(modelUrl);
+  let previewUrl=null;
+  if(preview.previewUrl){
+   const previewPath=path.join(UPLOADS,path.basename(preview.previewUrl));
+   previewUrl=await cloud.uploadObject(cloud.MEDIA,path.basename(preview.previewUrl),fs.readFileSync(previewPath),MIME[path.extname(previewPath)]);
+   created.push(previewUrl);
+  }
+  return {modelUrl,format:upload.format,...preview,previewUrl};
+ }catch(err){await Promise.all(created.map(safeDeleteUrl));throw err}
+ finally{await Promise.all(localFiles.map(safeDeleteUrl));}
+}
+async function promotePhotos(urls){
+ if(!cloud.enabled)return urls;
+ const created=[];
+ try{
+  for(const localUrl of urls){
+   const localPath=path.join(UPLOADS,path.basename(localUrl));
+   const remote=await cloud.uploadObject(cloud.MEDIA,path.basename(localUrl),fs.readFileSync(localPath),MIME[path.extname(localPath)]);
+   created.push(remote);
+  }
+  return created;
+ }catch(err){await Promise.all(created.map(safeDeleteUrl));throw err}
+ finally{await Promise.all(urls.map(safeDeleteUrl));}
+}
 function runPreviewWorker(source,target,format){return new Promise((resolve,reject)=>{
  const worker=new Worker(path.join(ROOT,'model-preview-worker.js'),{
    workerData:{source,target,format},resourceLimits:{maxOldGenerationSizeMb:256,maxYoungGenerationSizeMb:32}
@@ -200,12 +246,13 @@ async function preparePreview(upload){
 }
 // Kalıcı diski olan mevcut kurulumlarda eski ürünler de otomatik önizlemeye kavuşsun.
 async function backfillPreviews(){
- const rows=loadProducts();
+ if(cloud.enabled)return;
+ const rows=await loadProducts();
  for(const original of rows){
   if(!original.modelUrl || original.previewUrl || original.previewError || !['3mf','stl'].includes(original.format))continue;
   if(!fs.existsSync(path.join(UPLOADS,path.basename(original.modelUrl))))continue;
   const prepared=await preparePreview({...original,size:fs.statSync(path.join(UPLOADS,path.basename(original.modelUrl))).size});
-  const fresh=loadProducts(),index=fresh.findIndex(p=>p.id===original.id);
+  const fresh=await loadProducts(),index=fresh.findIndex(p=>p.id===original.id);
   if(index>=0&&fresh[index].modelUrl===original.modelUrl){Object.assign(fresh[index],prepared);saveProducts(fresh)}
  }
 }
@@ -217,18 +264,21 @@ function validOrigin(req){
 async function handle(req,res){
  const method=req.method || 'GET';const url=new URL(req.url,'http://localhost');const pathname=url.pathname;
  if(['POST','PUT','PATCH','DELETE'].includes(method) && !validOrigin(req))return reply(res,403,{error:'İsteğe izin verilmedi.'});
- if(method==='GET'&&pathname==='/api/health')return reply(res,200,{status:'ok'});
+ if(method==='GET'&&pathname==='/api/health')return reply(res,200,{status:'ok',storage:cloud.enabled?'supabase':'local'});
  if(method==='GET'&&pathname==='/api/products'){
-  const reviews=loadReviews();return reply(res,200,loadProducts().filter(p=>p.active).map(p=>({...p,photos:p.photos||[],rating:ratingSummary(p.id,reviews)})));
+  const products=await loadProducts();const ratings=cloud.enabled?await cloud.ratings():null;
+  const reviews=cloud.enabled?null:await loadReviews();
+  return reply(res,200,products.filter(p=>p.active).map(p=>({...p,modelUrl:cloud.enabled?(p.previewUrl||null):p.modelUrl,photos:p.photos||[],rating:ratings?(ratings[p.id]||{count:0,average:0}):ratingSummary(p.id,reviews)})));
  }
- if(pathname==='/api/guestbook' && method==='GET')return reply(res,200,pagedReviews(loadReviews().filter(r=>r.scope==='museum'),url));
- if(pathname==='/api/guestbook' && method==='POST')return reply(res,201,addReview(req,'museum',null,await readJson(req)));
+ if(pathname==='/api/guestbook' && method==='GET')return reply(res,200,cloud.enabled?await cloud.reviewsPage({scope:'museum',page:url.searchParams.get('page')}):pagedReviews((await loadReviews()).filter(r=>r.scope==='museum'),url));
+ if(pathname==='/api/guestbook' && method==='POST')return reply(res,201,await addReview(req,'museum',null,await readJson(req)));
  const publicReview=/^\/api\/products\/([a-zA-Z0-9-]+)\/reviews$/.exec(pathname);
  if(publicReview&&(method==='GET'||method==='POST')){
-  const product=loadProducts().find(p=>p.id===publicReview[1]&&p.active);
+  const product=(await loadProducts()).find(p=>p.id===publicReview[1]&&p.active);
   if(!product)return reply(res,404,{error:'Ürün bulunamadı.'});
-  if(method==='POST')return reply(res,201,addReview(req,'product',product.id,await readJson(req)));
-  const reviews=loadReviews();return reply(res,200,{...pagedReviews(reviews.filter(r=>r.scope==='product'&&r.productId===product.id),url),rating:ratingSummary(product.id,reviews)});
+  if(method==='POST')return reply(res,201,await addReview(req,'product',product.id,await readJson(req)));
+  if(cloud.enabled){const [page,ratings]=await Promise.all([cloud.reviewsPage({scope:'product',productId:product.id,page:url.searchParams.get('page')}),cloud.ratings()]);return reply(res,200,{...page,rating:ratings[product.id]||{count:0,average:0}})}
+  const reviews=await loadReviews();return reply(res,200,{...pagedReviews(reviews.filter(r=>r.scope==='product'&&r.productId===product.id),url),rating:ratingSummary(product.id,reviews)});
  }
  if(method==='POST'&&pathname==='/api/admin/login'){
    const ip=String(req.headers['x-forwarded-for']||req.socket.remoteAddress||'unknown').split(',')[0];
@@ -249,11 +299,13 @@ async function handle(req,res){
  }
  if(pathname.startsWith('/api/admin/')){
    if(!auth(req,res))return;
-   if(method==='GET'&&pathname==='/api/admin/products')return reply(res,200,loadProducts());
-   if(method==='GET'&&pathname==='/api/admin/reviews')return reply(res,200,loadReviews().slice(0,200));
+   if(method==='GET'&&pathname==='/api/admin/products')return reply(res,200,await loadProducts());
+   if(method==='GET'&&pathname==='/api/admin/reviews')return reply(res,200,cloud.enabled?await cloud.recentReviews(200):(await loadReviews()).slice(0,200));
+   if(method==='GET'&&pathname==='/api/admin/reviews/export')return reply(res,200,await loadReviews());
    const reviewMatch=/^\/api\/admin\/reviews\/([a-zA-Z0-9-]+)$/.exec(pathname);
    if(reviewMatch&&method==='DELETE'){
-    const rows=loadReviews();const index=rows.findIndex(r=>r.id===reviewMatch[1]);if(index<0)return reply(res,404,{error:'Yorum bulunamadı.'});
+    if(cloud.enabled){await cloud.removeReview(reviewMatch[1]);return reply(res,200,{ok:true})}
+    const rows=await loadReviews();const index=rows.findIndex(r=>r.id===reviewMatch[1]);if(index<0)return reply(res,404,{error:'Yorum bulunamadı.'});
     rows.splice(index,1);saveReviews(rows);return reply(res,200,{ok:true});
    }
    if(method==='POST'&&pathname==='/api/admin/products'){
@@ -263,17 +315,21 @@ async function handle(req,res){
      if(form.photos.length>MAX_PHOTOS)throw Object.assign(new Error('En fazla 6 fotoğraf eklenebilir.'),{status:400});
      let upload=null,photoUrls=[];
      try{
-      upload=saveUpload(form.file);photoUrls=savePhotos(form.photos);row.photos=photoUrls;
-      if(upload){Object.assign(row,{modelUrl:upload.modelUrl,format:upload.format,isDemo:false},await preparePreview(upload));}
-      const rows=loadProducts();rows.unshift(row);saveProducts(rows);return reply(res,201,row);
-     }catch(err){if(upload)removeUpload(upload);photoUrls.forEach(safeDeleteUrl);throw err}
+      upload=saveUpload(form.file);photoUrls=savePhotos(form.photos);
+      row.photos=await promotePhotos(photoUrls);
+      if(upload){const preview=await preparePreview(upload);Object.assign(row,await promoteModel(upload,preview),{isDemo:false});}
+      if(cloud.enabled){await cloud.upsertProduct(row)}else{const rows=await loadProducts();rows.unshift(row);saveProducts(rows)}
+      return reply(res,201,row);
+     }catch(err){if(upload)await removeUpload(upload);await Promise.all(photoUrls.map(safeDeleteUrl));await removeUpload(row);throw err}
    }
    const match=/^\/api\/admin\/products\/([a-zA-Z0-9-]+)$/.exec(pathname);
-   if(match){const id=match[1];const rows=loadProducts(),idx=rows.findIndex(p=>p.id===id);
+   if(match){const id=match[1];const rows=await loadProducts(),idx=rows.findIndex(p=>p.id===id);
      if(idx<0)return reply(res,404,{error:'Ürün bulunamadı.'});
      if(method==='DELETE'){
-       removeUpload(rows[idx]);rows.splice(idx,1);saveProducts(rows);
-       const reviews=loadReviews().filter(r=>r.productId!==id);saveReviews(reviews);
+       const oldForDelete=rows[idx];
+       if(cloud.enabled){await cloud.deleteProduct(id);await cloud.removeReviewsForProduct(id)}
+       else{rows.splice(idx,1);saveProducts(rows);const reviews=(await loadReviews()).filter(r=>r.productId!==id);saveReviews(reviews)}
+       await removeUpload(oldForDelete);
        return reply(res,200,{ok:true});
      }
      if(method==='PUT'){
@@ -285,14 +341,64 @@ async function handle(req,res){
        let upload=null,photoUrls=[];
        try{
         upload=saveUpload(form.file);photoUrls=savePhotos(form.photos);
-        cleaned.photos=[...retained,...photoUrls];
-        if(upload){Object.assign(cleaned,{modelUrl:upload.modelUrl,format:upload.format,isDemo:false,previewUrl:null,previewError:null,previewTriangles:null},await preparePreview(upload));}
-        rows[idx]=cleaned;saveProducts(rows);
-        if(upload){safeDeleteUrl(old.modelUrl);safeDeleteUrl(old.previewUrl)}
-        for(const photo of old.photos||[])if(!retained.includes(photo))safeDeleteUrl(photo);
+        cleaned.photos=[...retained,...await promotePhotos(photoUrls)];
+        if(upload){Object.assign(cleaned,{modelUrl:null,format:null,isDemo:false,previewUrl:null,previewError:null,previewTriangles:null},await promoteModel(upload,await preparePreview(upload)));}
+        if(cloud.enabled){await cloud.upsertProduct(cleaned)}else{rows[idx]=cleaned;saveProducts(rows)}
+        if(upload){await Promise.all([safeDeleteUrl(old.modelUrl),safeDeleteUrl(old.previewUrl)]);}
+        for(const photo of old.photos||[])if(!retained.includes(photo))await safeDeleteUrl(photo);
         return reply(res,200,cleaned);
-       }catch(err){if(upload)removeUpload(upload);photoUrls.forEach(safeDeleteUrl);throw err}
+       }catch(err){if(upload){await removeUpload(upload);if(cleaned.modelUrl!==old.modelUrl)await Promise.all([safeDeleteUrl(cleaned.modelUrl),safeDeleteUrl(cleaned.previewUrl)])}
+        await Promise.all(photoUrls.map(safeDeleteUrl));for(const photo of cleaned.photos||[])if(!retained.includes(photo))await safeDeleteUrl(photo);throw err}
      }
+   }
+   if(method==='GET'&&pathname==='/api/admin/asset'){
+     if(!cloud.enabled)return reply(res,409,{error:'Yalnızca Supabase depo yedeği için.'});
+     const asset=url.searchParams.get('url')||'';
+     // Protect original design files. Download only names referenced by an existing product.
+     const rows=await loadProducts();
+     if(!rows.some(r=>[r.modelUrl,r.previewUrl,...(r.photos||[])].includes(asset)))return reply(res,404,{error:'Dosya ürünlerde bulunamadı.'});
+     if(!cloud.objectRef(asset))return reply(res,400,{error:'Dosya referansı geçersiz.'});
+     const content=await cloud.downloadObject(asset);
+     res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="threedee-asset"','Cache-Control':'no-store','Content-Length':content.length,'X-Content-Type-Options':'nosniff'});
+     return res.end(content);
+   }
+   // Backup restore is opt-in. Never writes to the old Render filesystem in Supabase mode.
+   if(method==='POST'&&pathname==='/api/admin/import-asset'){
+     if(!cloud.enabled)return reply(res,409,{error:'Önce Supabase bağlantısını kurun.'});
+     const role=String(req.headers['x-threedee-role']||'');
+     const ext=String(req.headers['x-threedee-ext']||'').toLowerCase();
+     if(!['model','preview','photo'].includes(role)||!/^\.(3mf|stl|glb|jpg|jpeg|png|webp)$/.test(ext))return reply(res,400,{error:'Dosya türü geçersiz.'});
+     if(role==='model'&&!['.3mf','.stl','.glb'].includes(ext))return reply(res,400,{error:'Geçersiz model.'});
+     if(role==='preview'&&ext!=='.glb')return reply(res,400,{error:'GLB önizlemesi gerekli.'});
+     if(role==='photo'&&!['.jpg','.jpeg','.png','.webp'].includes(ext))return reply(res,400,{error:'Geçersiz fotoğraf.'});
+     const bytes=await readRaw(req,role==='photo'?MAX_PHOTO:MAX_FILE);
+     if(!bytes.length)return reply(res,400,{error:'Boş dosya.'});
+     if(ext==='.3mf'&&bytes.subarray(0,2).toString()!=='PK')return reply(res,400,{error:'3MF dosyası geçersiz.'});
+     if(ext==='.glb'&&bytes.subarray(0,4).toString()!=='glTF')return reply(res,400,{error:'GLB dosyası geçersiz.'});
+     if(['.jpg','.jpeg'].includes(ext)&&!(bytes[0]===255&&bytes[1]===216&&bytes[2]===255))return reply(res,400,{error:'JPG hatalı.'});
+     if(ext==='.png'&&!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return reply(res,400,{error:'PNG hatalı.'});
+     if(ext==='.webp'&&(bytes.subarray(0,4).toString()!=='RIFF'||bytes.subarray(8,12).toString()!=='WEBP'))return reply(res,400,{error:'WEBP hatalı.'});
+     const key=crypto.randomUUID()+ext;
+     const url=await cloud.uploadObject(role==='model'?cloud.ORIGINALS:cloud.MEDIA,key,bytes,MIME[ext]);
+     return reply(res,201,{url});
+   }
+   if(method==='POST'&&pathname==='/api/admin/import-data'){
+     if(!cloud.enabled)return reply(res,409,{error:'Önce Supabase bağlantısını kurun.'});
+     const buf=await readRaw(req,8*1024*1024);let incoming;try{incoming=JSON.parse(buf.toString('utf8'))}catch{return reply(res,400,{error:'JSON bozuk.'})}
+     if(!Array.isArray(incoming.products)||!Array.isArray(incoming.reviews)||incoming.products.length>1000||incoming.reviews.length>10000)return reply(res,400,{error:'Yedek ürün veya yorum sınırı aşıldı.'});
+     const urlAllowed=u=>u==null||(typeof u==='string'&&(cloud.objectRef(u)!==null));
+     const newProducts=incoming.products.map(p=>{
+       if(!p||typeof p.id!=='string'||!/^[a-z0-9-]{1,90}$/i.test(p.id)||!urlAllowed(p.modelUrl)||!urlAllowed(p.previewUrl)||!Array.isArray(p.photos||[])||(p.photos||[]).length>MAX_PHOTOS||(p.photos||[]).some(u=>!urlAllowed(u)))throw Object.assign(new Error('Yedek ürün bağlantıları geçersiz.'),{status:400});
+       const row=sanitize(p,{...p,id:p.id});row.photos=p.photos||[];return row;
+     });
+     const newReviews=incoming.reviews.map(r=>{
+       if(!r||!/[a-z0-9-]{1,90}/i.test(r.id)||!['museum','product'].includes(r.scope)||!String(r.name||'').trim()||!String(r.message||'').trim())throw Object.assign(new Error('Yedek yorum geçersiz.'),{status:400});
+       return {id:r.id,scope:r.scope,productId:r.scope==='product'?r.productId:null,name:String(r.name).slice(0,35),message:String(r.message).slice(0,700),rating:r.scope==='product'?Number(r.rating):null,createdAt:r.createdAt||new Date().toISOString()};
+     });
+     if(newReviews.some(r=>r.scope==='product'&&(!r.productId||!Number.isInteger(r.rating)||r.rating<1||r.rating>5)))return reply(res,400,{error:'Yorum puanı geçersiz.'});
+     for(const product of newProducts)await cloud.upsertProduct(product);
+     await cloud.upsertReviews(newReviews);
+     return reply(res,200,{ok:true,products:newProducts.length,reviews:newReviews.length});
    }
    return reply(res,404,{error:'Yönetici adresi bulunamadı.'});
  }
@@ -310,7 +416,8 @@ const server=http.createServer((req,res)=>{Promise.resolve(handle(req,res)).catc
  console.error(e);if(!res.headersSent)reply(res,e.status||500,{error:e.status?e.message:'Sunucu hatası oluştu.'});
 });});
 server.listen(PORT,'0.0.0.0',()=>{
- setImmediate(()=>backfillPreviews().catch(err=>console.warn('Önizleme geçişi:',err.message)));
+ if(cloud.enabled){cloud.check().then(()=>console.log('Supabase veritabanına bağlandı.')).catch(err=>{console.error('Supabase bağlantısı başarısız:',err.message);process.exitCode=1;server.close()});}
+ else setImmediate(()=>backfillPreviews().catch(err=>console.warn('Önizleme geçişi:',err.message)));
  console.log(`3D Müze: http://localhost:${PORT}`);
  if(!process.env.ADMIN_PASSWORD){console.log('\n=======================================================');console.log('GECICI ADMIN ŞİFRESİ:',PASSWORD);console.log('Kalıcı kullanım için ADMIN_PASSWORD ortam değişkenini ayarlayın.');console.log('=======================================================\n');}
 });
