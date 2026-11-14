@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { initShop, setShopProduct } from './shop.js';
 
 const $ = id => document.getElementById(id);
 const money = n => new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',maximumFractionDigits:2}).format(Number(n)||0);
@@ -365,7 +366,7 @@ async function openProduct(p){
  if(!p)return;
  closeCatalog();closeRooms();modalOpen=true;currentProduct=p;touchJoy={x:0,y:0};$('joyKnob').style.transform='';setShade();
  $('productModal').classList.add('open');$('productModal').setAttribute('aria-hidden','false');
- renderProductPhotos(p);selectViewerMode(false);resetRating();loadProductReviews(p,true);
+ renderProductPhotos(p);selectViewerMode(false);resetRating();loadProductReviews(p,true);setShopProduct(p);
  $('productIndex').textContent=String(products.findIndex(x=>x.id===p.id)+1).padStart(2,'0');
  $('productName').textContent=p.name;$('productPrice').textContent=money(p.price);$('productDescription').textContent=p.description||'Bu ürün için henüz açıklama eklenmedi.';
  $('productStock').textContent=p.stock?`Stokta ${p.stock} adet mevcut`:'Şu an stokta yok';$('stockDot').classList.toggle('empty',!p.stock);
@@ -565,6 +566,52 @@ function setupWalk(){
  function endJoy(e){if(stickId!==e.pointerId)return;stickId=null;touchJoy={x:0,y:0};knob.style.transform='';}
  j.addEventListener('pointerup',endJoy);j.addEventListener('pointercancel',endJoy);
 }
+// Lightweight live-museum visitors. Positions are ephemeral; no visitor details are saved.
+const remoteAvatars=new Map();
+const avatarPalette=[0xe6b486,0x92ccd3,0xb6a8eb,0xd58eaa,0xa1d69c,0xeacc92];
+function avatarLabel(name){
+ const c=document.createElement('canvas');c.width=320;c.height=80;
+ const ctx=c.getContext('2d');ctx.fillStyle='rgba(20,30,33,.90)';ctx.roundRect(1,1,318,76,16);ctx.fill();
+ ctx.fillStyle='#f6f1e5';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 25px Arial';ctx.fillText(String(name).slice(0,22),160,41,290);
+ const tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;
+ const pane=new THREE.Mesh(new THREE.PlaneGeometry(1.35,.34),new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false}));pane.position.y=2.38;return pane;
+}
+function makeAvatar(visitor){
+ const group=new THREE.Group();const color=new THREE.Color(visitor.color||avatarPalette[0]);
+ const jacket=new THREE.MeshStandardMaterial({color,roughness:.75,metalness:.04});
+ const face=new THREE.MeshStandardMaterial({color:0xe5b99b,roughness:.85});
+ const trousers=new THREE.MeshStandardMaterial({color:0x29333b,roughness:.9});
+ const torso=new THREE.Mesh(new THREE.CapsuleGeometry(.27,.82,3,8),jacket);torso.position.y=1.19;group.add(torso);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.24,12,9),face);head.position.y=1.91;group.add(head);
+ for(const v of [-1,1]){const leg=new THREE.Mesh(new THREE.CylinderGeometry(.105,.12,.62,8),trousers);leg.position.set(v*.13,.43,0);group.add(leg);
+  const arm=new THREE.Mesh(new THREE.CylinderGeometry(.08,.085,.72,8),jacket);arm.position.set(v*.33,1.25,0);arm.rotation.z=v*.20;group.add(arm)}
+ const eyes=new THREE.Mesh(new THREE.SphereGeometry(.055,8,8),new THREE.MeshBasicMaterial({color:0x25343c}));eyes.position.set(0,1.95,-.23);group.add(eyes);
+ const label=avatarLabel(visitor.name);group.add(label);label.material.depthTest=false;
+ group.position.set(visitor.x,0,visitor.z);group.rotation.y=visitor.yaw||0;scene.add(group);
+ return {group,target:new THREE.Vector3(visitor.x,0,visitor.z),yaw:visitor.yaw||0,age:performance.now(),label};
+}
+function receiveVisitors(data){
+ $('presenceCount').textContent=`● ${Number(data.count)||1} ziyaretçi`;
+ const valid=new Set();
+ for(const visitor of (data.visitors||[]).slice(0,mobile?14:28)){
+  if(!visitor||!Number.isFinite(visitor.x)||!Number.isFinite(visitor.z))continue;
+  valid.add(visitor.id);let a=remoteAvatars.get(visitor.id);
+  if(!a){a=makeAvatar(visitor);remoteAvatars.set(visitor.id,a)}
+  a.target.set(visitor.x,0,visitor.z);a.yaw=visitor.yaw||0;a.age=performance.now();
+ }
+ for(const [id,a] of remoteAvatars){if(!valid.has(id)){scene.remove(a.group);a.label.material.map.dispose();a.group.traverse(obj=>{if(obj.isMesh){obj.geometry.dispose();if(obj.material!==a.label.material)obj.material.dispose()}});a.label.material.dispose();remoteAvatars.delete(id)}}
+}
+function updateAvatars(dt){for(const a of remoteAvatars.values()){a.group.position.lerp(a.target,Math.min(1,dt*5));a.group.rotation.y+=Math.atan2(Math.sin(a.yaw-a.group.rotation.y),Math.cos(a.yaw-a.group.rotation.y))*Math.min(1,dt*5);a.label.rotation.y=-a.group.rotation.y+camera.rotation.y;}}
+function initPresence(){
+ let busy=false;
+ async function pulse(){
+  if(!active||document.hidden||!scene||busy)return;
+  busy=true;try{const r=await fetch('/api/presence',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({x:+camera.position.x.toFixed(2),z:+camera.position.z.toFixed(2),yaw:+yaw.toFixed(2)}),signal:AbortSignal.timeout(4000)});
+   if(r.ok)receiveVisitors(await r.json());
+  }catch(err){console.warn('Canlı ziyaretçi bağlantısı:',err.message)}finally{busy=false}
+ }
+ setInterval(pulse,2500);document.addEventListener('visibilitychange',()=>{if(!document.hidden)pulse()});pulse();
+}
 function animate(){
  requestAnimationFrame(animate);
  const dt=Math.min(clock.getDelta(),.07);
@@ -573,7 +620,7 @@ function animate(){
  drawAccumulator+=dt;
  if(mobile&&drawAccumulator<1/30)return;
  const step=mobile?Math.min(drawAccumulator,.065):dt;drawAccumulator=0;
- navigate(step);camera.rotation.set(pitch,yaw,0,'YXZ');
+ navigate(step);camera.rotation.set(pitch,yaw,0,'YXZ');updateAvatars(step);
  if(!guestbookOpen&&!roomOpen)updateProximity(step);
  refreshNearbyModels(step);
  if(active&&!modalOpen&&!catalogOpen&&!guestbookOpen&&!roomOpen){
@@ -595,6 +642,7 @@ async function init(){
   backZ=Math.min(-20.8,lastZ-5.15);galleryLength=21-backZ;galleryCenter=(21+backZ)/2;
   $('artCount').textContent=counts.art+' eser';$('designCount').textContent=counts.design+' eser';
   setEnvironment();resetCamera();buildStands();buildGuestbookStand();renderCatalog();setupWalk();animate();updateRoomIndicator();
+  initShop({products:()=>products,openProduct,toast:showToast});initPresence();
   $('loadingScreen').remove();
   window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);fitViewer()});
  }catch(e){console.error(e);$('loadingScreen').innerHTML='<div>3D müze açılamadı.</div><div style="font:12px Arial;color:#c6ad8e;letter-spacing:0">Tarayıcında WebGL desteğini ve internet bağlantını kontrol et.</div>'}

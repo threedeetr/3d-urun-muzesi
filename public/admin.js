@@ -20,7 +20,7 @@ async function refresh(){products=await api('/api/admin/products');
  $('activeCount').textContent=products.filter(p=>p.active).length;
  $('modelCount').textContent=products.filter(p=>p.modelUrl).length;
  const list=$('adminProductList');list.replaceChildren();
- if(!products.length){const empty=document.createElement('p');empty.textContent='Henüz ürün eklenmedi. Yeni ürün ekle butonuyla başlayabilirsin.';list.append(empty);await loadAdminReviews();return}
+ if(!products.length){const empty=document.createElement('p');empty.textContent='Henüz ürün eklenmedi. Yeni ürün ekle butonuyla başlayabilirsin.';list.append(empty);await loadAdminReviews();await loadAdminOrders();return}
  for(const p of products){
   const row=document.createElement('div');row.className='admin-product-row';row.tabIndex=0;row.setAttribute('role','button');
   const ico=document.createElement('span');ico.className='admin-product-icon';ico.style.color=p.color;
@@ -38,7 +38,7 @@ async function refresh(){products=await api('/api/admin/products');
   row.append(ico,title,mid,arrow);row.addEventListener('click',()=>openEditor(p));row.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openEditor(p)}});
   list.append(row);
  }
- await loadAdminReviews();
+ await loadAdminReviews();await loadAdminOrders();
 }
 function openEditor(p=null){
  editing=p;chosenFile=null;chosenPhotos=[];retainedPhotos=new Set(p?.photos||[]);clearPhotoPreviews();$('productForm').reset();$('modelFile').value='';$('photoFiles').value='';
@@ -104,6 +104,24 @@ async function loadAdminReviews(){
   }
  }catch(err){el.textContent=err.message}
 }
+async function loadAdminOrders(){
+ const el=$('adminOrders');if(!el)return;el.textContent='Talepler yükleniyor…';
+ try{const data=await api('/api/admin/orders');el.replaceChildren();if(!data.orders?.length){el.textContent='Henüz sipariş talebi yok.';return}
+  for(const o of data.orders){const card=document.createElement('article');card.className='admin-review-card';
+   const title=document.createElement('strong');title.textContent=`Talep #${o.id.slice(0,8)} · ${new Date(o.created_at).toLocaleString('tr-TR')}`;
+   const details=document.createElement('p');details.textContent=`${o.recipient} · ${o.phone} · ${o.city} / ${o.address}`;
+   const items=document.createElement('p');items.textContent=(o.items||[]).map(p=>`${p.name} × ${p.quantity}`).join(' · ');
+   const total=document.createElement('strong');total.textContent=`Toplam: ${money(o.total)} · Ödeme alınmadı`;
+   const note=document.createElement('p');note.textContent=o.note?`Not: ${o.note}`:'';
+   const select=document.createElement('select');for(const [value,label] of [['new','Yeni talep'],['contacted','İletişime geçildi'],['cancelled','İptal']]){const opt=document.createElement('option');opt.value=value;opt.textContent=label;select.append(opt)}
+   select.value=o.status;select.className='admin-order-status';select.addEventListener('change',async()=>{
+    try{await api(`/api/admin/orders/${o.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:select.value})});toast('Talep durumu güncellendi.')}catch(e){toast(e.message);select.value=o.status}
+   });
+   card.append(title,details,items,total,note,select);el.append(card);
+  }
+ }catch(e){el.textContent='Sipariş listesi yüklenemedi: '+e.message+' (Supabase V6 SQL kodunu çalıştırdın mı?)'}
+}
+$('refreshOrders').addEventListener('click',loadAdminOrders);
 $('refreshReviews').addEventListener('click',loadAdminReviews);
 $('photoFiles').addEventListener('change',e=>choosePhotos(e.target.files));
 $('loginForm').addEventListener('submit',async e=>{
