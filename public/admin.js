@@ -105,21 +105,31 @@ async function loadAdminReviews(){
  }catch(err){el.textContent=err.message}
 }
 async function loadAdminOrders(){
- const el=$('adminOrders');if(!el)return;el.textContent='Talepler yükleniyor…';
- try{const data=await api('/api/admin/orders');el.replaceChildren();if(!data.orders?.length){el.textContent='Henüz sipariş talebi yok.';return}
-  for(const o of data.orders){const card=document.createElement('article');card.className='admin-review-card';
-   const title=document.createElement('strong');title.textContent=`Talep #${o.id.slice(0,8)} · ${new Date(o.created_at).toLocaleString('tr-TR')}`;
-   const details=document.createElement('p');details.textContent=`${o.recipient} · ${o.phone} · ${o.city} / ${o.address}`;
-   const items=document.createElement('p');items.textContent=(o.items||[]).map(p=>`${p.name} × ${p.quantity}`).join(' · ');
-   const total=document.createElement('strong');total.textContent=`Toplam: ${money(o.total)} · Ödeme alınmadı`;
-   const note=document.createElement('p');note.textContent=o.note?`Not: ${o.note}`:'';
-   const select=document.createElement('select');for(const [value,label] of [['new','Yeni talep'],['contacted','İletişime geçildi'],['cancelled','İptal']]){const opt=document.createElement('option');opt.value=value;opt.textContent=label;select.append(opt)}
-   select.value=o.status;select.className='admin-order-status';select.addEventListener('change',async()=>{
-    try{await api(`/api/admin/orders/${o.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:select.value})});toast('Talep durumu güncellendi.')}catch(e){toast(e.message);select.value=o.status}
-   });
-   card.append(title,details,items,total,note,select);el.append(card);
-  }
- }catch(e){el.textContent='Sipariş listesi yüklenemedi: '+e.message+' (Supabase V6 SQL kodunu çalıştırdın mı?)'}
+ const el=$('adminOrders');if(!el)return;el.textContent='Siparişler yükleniyor…';
+ const statusNames={new:'Yeni talep',contacted:'İletişime geçildi',paid:'Ödeme alındı',preparing:'Hazırlanıyor',printing:'3D baskıda',packaging:'Paketleniyor',shipped:'Kargoya verildi',delivered:'Teslim edildi',cancelled:'İptal'};
+ const payNames={not_paid:'Ödeme yapılmadı',pending:'Ödeme bekleniyor',paid:'Ödendi ✓',failed:'Ödeme başarısız'};
+ try{const data=await api('/api/admin/orders');el.replaceChildren();if(!data.orders?.length){el.textContent='Henüz sipariş yok.';return}
+ for(const o of data.orders){
+  const card=document.createElement('article');card.className='admin-review-card';
+  const title=document.createElement('strong');title.textContent=`Sipariş #${o.id.slice(0,8)} · ${new Date(o.created_at).toLocaleString('tr-TR')}`;
+  const details=document.createElement('p');details.textContent=`${o.recipient} · ${o.phone} · ${o.city} / ${o.address}`;
+  const items=document.createElement('p');items.textContent=(o.items||[]).map(p=>`${p.name} × ${p.quantity}`).join(' · ');
+  const total=document.createElement('strong');total.textContent=`${money(o.total)} · ${(payNames[o.payment_status]||o.payment_status)}${o.payment_test?' (TEST)':''}`;
+  const note=document.createElement('p');note.textContent=o.note?`Not: ${o.note}`:'';
+  const paymentInfo=document.createElement('p');paymentInfo.textContent=o.payment_provider==='shopier'?`Shopier sipariş: ${o.shopier_order_id||'Henüz ödeme yok'} · Ödeme kaydı: ${o.shopier_product_id||'bağlantı bekleniyor'}`:'';
+  const select=document.createElement('select');let options=o.payment_status==='paid'?[['paid','Ödeme alındı'],['preparing','Hazırlanıyor'],['printing','3D baskıda'],['packaging','Paketleniyor'],['shipped','Kargoya verildi'],['delivered','Teslim edildi']]:[['new','Yeni talep'],['contacted','İletişime geçildi'],['cancelled','İptal']];
+  if(!options.some(([key])=>key===o.status))options.unshift([o.status,statusNames[o.status]||o.status]);
+  for(const [value,label] of options){const opt=document.createElement('option');opt.value=value;opt.textContent=label;select.append(opt)}select.value=o.status;select.className='admin-order-status';
+  const carrier=document.createElement('input');carrier.placeholder='Kargo firması';carrier.maxLength=60;carrier.value=o.carrier||'';carrier.className='admin-shipping-input';
+  const tracking=document.createElement('input');tracking.placeholder='Takip numarası';tracking.maxLength=80;tracking.value=o.tracking_number||'';tracking.className='admin-shipping-input';
+  const trackingUrl=document.createElement('input');trackingUrl.placeholder='https://... kargo takip linki';trackingUrl.maxLength=350;trackingUrl.value=o.tracking_url||'';trackingUrl.className='admin-shipping-input';
+  const btn=document.createElement('button');btn.type='button';btn.textContent='Durum ve kargoyu kaydet';btn.className='admin-mini-btn';btn.addEventListener('click',async()=>{
+   btn.disabled=true;try{await api(`/api/admin/orders/${o.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:select.value,carrier:carrier.value,tracking_number:tracking.value,tracking_url:trackingUrl.value})});toast('Sipariş durumu güncellendi.');loadAdminOrders()}catch(e){toast(e.message);btn.disabled=false}
+  });
+  const row=document.createElement('div');row.className='admin-shipping-row';row.append(select,carrier,tracking,trackingUrl,btn);
+  card.append(title,details,items,total,paymentInfo,note,row);el.append(card);
+ }
+ }catch(e){el.textContent='Sipariş listesi yüklenemedi: '+e.message+' (V8 Supabase SQL kodunu çalıştırdın mı?)'}
 }
 $('refreshOrders').addEventListener('click',loadAdminOrders);
 $('refreshReviews').addEventListener('click',loadAdminReviews);
