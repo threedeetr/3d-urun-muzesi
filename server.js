@@ -8,6 +8,7 @@ const { Worker } = require('node:worker_threads');
 const cloud = require('./supabase-store.js');
 const commerce = require('./customer-v6.js');
 const chat = require('./chat-v7.js');
+const payment = require('./payment-v8.js');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -267,6 +268,9 @@ async function handle(req,res){
  const method=req.method || 'GET';const url=new URL(req.url,'http://localhost');const pathname=url.pathname;
  if(['POST','PUT','PATCH','DELETE'].includes(method) && !validOrigin(req))return reply(res,403,{error:'İsteğe izin verilmedi.'});
  if(method==='GET'&&pathname==='/api/health')return reply(res,200,{status:'ok',storage:cloud.enabled?'supabase':'local'});
+ // Shopier payments are verified through the authenticated Shopier orders API.
+ if(method==='GET'&&pathname==='/api/payment/config')return reply(res,200,payment.config());
+
  // V7: public museum chat. Messages are checked and persisted by the backend.
  if(pathname==='/api/chat/messages' && method==='GET')return reply(res,200,await chat.list(url.searchParams.get('after')));
  if(pathname==='/api/chat/messages' && method==='POST'){
@@ -308,9 +312,11 @@ async function handle(req,res){
    }
   }
   if(pathname==='/api/customer/orders'){
-   if(method==='GET')return reply(res,200,{orders:await commerce.orders(user.id)});
-   if(method==='POST')return reply(res,201,{ok:true,order:await commerce.makeOrder(user.id,await readJson(req),await loadProducts())});
+   if(method==='GET'){await payment.reconcile(user.id);return reply(res,200,{orders:await commerce.orders(user.id)});}
+   if(method==='POST')return reply(res,201,{ok:true,order:await commerce.makeOrder(user.id,await readJson(req),await loadProducts(),{payOnline:payment.config().enabled,shippingFee:payment.shippingFee})});
   }
+  const payMatch=/^\/api\/customer\/orders\/([0-9a-f-]{36})\/pay$/.exec(pathname);
+  if(payMatch&&method==='POST')return reply(res,200,await payment.start(user,payMatch[1],req));
   return reply(res,404,{error:'Müşteri işlemi bulunamadı.'});
  }
  if(method==='GET'&&pathname==='/api/products'){
@@ -352,10 +358,10 @@ async function handle(req,res){
    if(method==='POST'&&pathname==='/api/admin/chat/mute'){
      const data=await readJson(req);return reply(res,200,await chat.adminMute(data.userId,24));
    }
-   if(method==='GET'&&pathname==='/api/admin/orders')return reply(res,200,{orders:await commerce.adminOrders()});
+   if(method==='GET'&&pathname==='/api/admin/orders'){await payment.reconcileAdmin();return reply(res,200,{orders:await commerce.adminOrders()});}
    if(method==='PATCH'&&pathname.match(/^\/api\/admin\/orders\/[a-f0-9-]{36}$/)){
     const id=pathname.split('/').pop(),data=await readJson(req);
-    await commerce.updateOrder(id,data.status);return reply(res,200,{ok:true});
+    await commerce.updateOrder(id,data);return reply(res,200,{ok:true});
    }
    if(method==='GET'&&pathname==='/api/admin/products')return reply(res,200,await loadProducts());
    if(method==='GET'&&pathname==='/api/admin/reviews')return reply(res,200,cloud.enabled?await cloud.recentReviews(200):(await loadReviews()).slice(0,200));
