@@ -2,7 +2,7 @@
 <html lang="tr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#141b1b"><meta name="description" content="3D ürün müzesinde sergiyi keşfet, baskıları 360° incele.">
-<title>ThreeDee · 3D Ürün Müzesi</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css">
+<title>ThreeDee · 3D Ürün Müzesi</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css?v=hd1">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
 </head><body class="museum-body"><audio id="classicalAmbience" src="/classical.ogg" preload="none" loop playsinline></audio>
 <div id="museumCanvas" aria-label="Üç boyutlu müze görünümü"></div>
@@ -11,7 +11,7 @@
 <div class="museum-hud-left"><div class="hud-label">THREEDEE / DİJİTAL MÜZE</div><div class="hud-heading" id="hudRoomTitle">GİRİŞ LOBİSİ</div><div class="hud-sub" id="hudRoomSub">Resepsiyon ve müze defteri</div><div class="hud-mini">✧ Salonları gez · Ürünleri keşfet</div></div>
 <div class="reticle" id="reticle"><span></span></div>
 <div class="floor-hint" id="floorHint"><span class="hint-bullet">✦</span><span id="hintText">Bir esere yaklaşarak inceleyebilirsin.</span></div>
-<div class="museum-bottom"><div class="controls-hint" id="controlsHint"><span class="keyboard-tag">W A S D</span> hareket et <span class="line-sep">/</span> sürükle & bak <span class="line-sep">/</span> <span class="keyboard-tag">E</span> incele <span class="line-sep">/</span> <span class="keyboard-tag">M</span> salonlar</div><div class="museum-tools"><button id="toggleMusic" class="round-text-btn" aria-label="Klasik müziği aç veya kapat">♫ Müzik açık</button><button id="resetPosition" class="round-text-btn" title="Girişe dön">↺ <span>Girişe dön</span></button><button id="fullScreen" class="round-text-btn" title="Tam ekran">⛶ <span>Tam ekran</span></button></div></div>
+<div class="museum-bottom"><div class="controls-hint" id="controlsHint"><span class="keyboard-tag">W A S D</span> hareket et <span class="line-sep">/</span> sürükle & bak <span class="line-sep">/</span> <span class="keyboard-tag">E</span> incele <span class="line-sep">/</span> <span class="keyboard-tag">M</span> salonlar</div><div class="museum-tools"><button id="graphicsQuality" class="round-text-btn graphics-quality-btn" type="button" title="Görüntü kalitesini değiştir" aria-label="Görüntü kalitesini değiştir">◆ HD</button><button id="toggleMusic" class="round-text-btn" aria-label="Klasik müziği aç veya kapat">♫ Müzik açık</button><button id="resetPosition" class="round-text-btn" title="Girişe dön">↺ <span>Girişe dön</span></button><button id="fullScreen" class="round-text-btn" title="Tam ekran">⛶ <span>Tam ekran</span></button></div></div>
 <div class="joystick" id="joystick" aria-label="Hareket kontrolü"><div class="joystick-ring"><div id="joyKnob" class="joystick-knob"></div></div><div class="joystick-label">HAREKET</div></div>
 <button id="interactMobile" class="mobile-interact" disabled>✦ &nbsp; Ürünü incele</button>
 <section id="welcome" class="welcome-overlay" role="dialog" aria-label="Müze girişi"><div class="welcome-backdrop"></div><div class="welcome-panel"><img class="welcome-brand" src="/threedee-logo.webp" alt="ThreeDee 3D baskı" width="220" height="176"><div class="welcome-ornament">✦ &nbsp; SANAL SERGİYE HOŞ GELDİN &nbsp; ✦</div><div class="welcome-kicker">3D ÜRÜN GALERİSİ · YENİ NESİL MÜZE</div><h1>Bir müzeden<br><em>çok daha fazlası.</em></h1><p>Modern galeriler arasında dolaş, resepsiyona uğra, seçtiğin eserleri üç boyutlu döndürerek keşfet.</p><div class="welcome-features"><span>◈&nbsp; 4 farklı alan</span><span>◎&nbsp; 360° inceleme</span><span>✦&nbsp; Gerçek 3D modeller</span></div><button id="enterMuseum" class="primary-btn">MÜZEYE GİR <span>→</span></button><div class="welcome-foot">BİLGİ: Galerideki başlangıç ürünleri temsili örneklerdir.</div></div><div class="welcome-side-label">EST. 2026 &nbsp;·&nbsp; DIGITAL GALLERY</div></section>
@@ -62,6 +62,6 @@
   </div>
 </section>
 <div id="toast" class="toast" aria-live="polite"></div>
-<script type="module" src="/museum.js"></script>
+<script type="module" src="/museum.js?v=hd1"></script>
 <script src="/chat.js" defer></script>
 </body></html>

@@ -6,6 +6,38 @@ import { initShop, setShopProduct } from './shop.js';
 const $ = id => document.getElementById(id);
 const money = n => new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',maximumFractionDigits:2}).format(Number(n)||0);
 const mobile = matchMedia('(pointer:coarse)').matches;
+// ThreeDee HD: gerçek ekran piksel yoğunluğu ve güvenli GPU piksel bütçesi.
+// Seçim kullanıcı cihazında kalır; Supabase/hesap verisine dokunulmaz.
+const GRAPHICS_KEY='threedee_graphics_quality';
+const GRAPHICS_PRESETS={
+ balanced:{name:'Dengeli',tag:'◇ Dengeli',dpr:1.2,maxPixels:mobile?1100000:1700000},
+ hd:{name:'HD',tag:'◆ HD',dpr:mobile?1.9:2,maxPixels:mobile?2600000:3600000},
+ ultra:{name:'Ultra HD',tag:'◆ Ultra',dpr:mobile?2.5:2.6,maxPixels:mobile?4000000:5600000}
+};
+let graphicsQuality='hd';
+try{const value=localStorage.getItem(GRAPHICS_KEY);if(GRAPHICS_PRESETS[value])graphicsQuality=value;}catch{}
+function renderDpr(viewer=false){
+ const q=GRAPHICS_PRESETS[graphicsQuality];
+ const elem=viewer?$('productViewer'):null;
+ const w=Math.max(1,viewer?(elem?.clientWidth||480):innerWidth),h=Math.max(1,viewer?(elem?.clientHeight||360):innerHeight);
+ const nativeDpr=Math.max(1,window.devicePixelRatio||1);
+ // Masaüstü 1× ekranlarda bir miktar supersampling; mobilde donanım DPR sınırı.
+ const nativeCap=mobile?nativeDpr:Math.max(nativeDpr,1.4);
+ return Math.max(1,Math.min(nativeCap,q.dpr,Math.sqrt(q.maxPixels/(w*h))));
+}
+function refreshQualityButton(){
+ const b=$('graphicsQuality');if(!b)return;
+ const preset=GRAPHICS_PRESETS[graphicsQuality];
+ b.textContent=preset.tag;b.dataset.quality=graphicsQuality;
+ b.title=`Görüntü kalitesi: ${preset.name}. Değiştirmek için dokun.`;
+ b.setAttribute('aria-label',b.title);
+}
+function applyGraphicsQuality(){
+ if(renderer){renderer.setPixelRatio(renderDpr());renderer.setSize(innerWidth,innerHeight);}
+ if(viewerRenderer){viewerRenderer.setPixelRatio(renderDpr(true));fitViewer();}
+ refreshQualityButton();
+}
+
 const colors = { gold: 0xc9ae7a, dark: 0x182326, wall: 0x34434a, floor: 0x888d8c, cream: 0xe7e9e4 };
 const ART_SHAPES = new Set(['figure','ghost','stitch','ballerina','cat']);
 const roomOf = product => ART_SHAPES.has(product.shape) ? 'art' : 'design';
@@ -30,22 +62,27 @@ function cyl(r1,r2,h,mat,x,y,z,parent,sides=24){return mesh(new THREE.CylinderGe
 function ball(r,mat,x,y,z,parent){return mesh(new THREE.SphereGeometry(r,20,14),mat,[x,y,z],parent)}
 function torus(r,t,mat,x,y,z,parent){return mesh(new THREE.TorusGeometry(r,t,12,45),mat,[x,y,z],parent)}
 function txtCanvas(text,subtitle='',width=1024,height=400,variant='sign'){
- const c=document.createElement('canvas');c.width=width;c.height=height;
- const ctx=c.getContext('2d');ctx.fillStyle=variant==='sign'?'#27332e':'#242c28';ctx.fillRect(0,0,width,height);
+ // Yüksek çözünürlüklü tipografi: orijinal ölçülerde çizip dokuya 1,5× örnek alırız.
+ const typeScale=1.5;
+ const c=document.createElement('canvas');c.width=Math.round(width*typeScale);c.height=Math.round(height*typeScale);
+ const ctx=c.getContext('2d');ctx.scale(typeScale,typeScale);
+ ctx.fillStyle=variant==='sign'?'#27332e':'#242c28';ctx.fillRect(0,0,width,height);
  ctx.strokeStyle='#b8a06d';ctx.lineWidth=5;ctx.strokeRect(16,16,width-32,height-32);
- ctx.fillStyle='#dbc8a3';ctx.textAlign='center';
+ ctx.fillStyle='#f1e5ce';ctx.textAlign='center';
  if(variant==='sign'){
   ctx.font='31px Georgia';ctx.fillText('✦    THE DIGITAL COLLECTION    ✦',width/2,78);
-  ctx.font='normal 92px Georgia';ctx.fillText(text,width/2,220);
+  ctx.font='normal 92px Georgia';ctx.fillText(text,width/2,220,width-65);
   ctx.font='24px Arial';ctx.letterSpacing='4px';ctx.fillText(subtitle,width/2,296);
  }else{
   const max=String(text).length>22?34:40;
-  ctx.font=`bold ${max}px Arial`;let shown=String(text);if(shown.length>28)shown=shown.slice(0,27)+'…';
-  ctx.fillText(shown,width/2,143);
-  ctx.font='34px Georgia';ctx.fillText(subtitle,width/2,226);
-  ctx.fillStyle='#b8a588';ctx.font='20px Arial';ctx.fillText('SERGİ ÜRÜNÜ   ·   360° İNCELE',width/2,291);
+  ctx.font=`bold ${max+4}px Arial`;let shown=String(text);if(shown.length>28)shown=shown.slice(0,27)+'…';
+  ctx.fillText(shown,width/2,143,width-48);
+  ctx.font='40px Georgia';ctx.fillText(subtitle,width/2,226,width-48);
+  ctx.fillStyle='#decbb0';ctx.font='24px Arial';ctx.fillText('SERGİ ÜRÜNÜ   ·   360° İNCELE',width/2,291,width-48);
  }
- const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=4;return t;
+ const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;
+ t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;
+ t.anisotropy=Math.min(8,renderer?.capabilities.getMaxAnisotropy()||8);return t;
 }
 function surfaceFrame(x,y,z,w,h,rotation,text,subtitle){
  const g=new THREE.Group();g.position.set(x,y,z);g.rotation.y=rotation;scene.add(g);
@@ -138,7 +175,7 @@ function setEnvironment(){
  box(bannerWidth+.12,bannerHeight+.12,.08,material(0x080a0c),0,bannerY,backZ+.44);
  const bannerTexture=new THREE.TextureLoader().load('/threedee-banner.jpg');
  bannerTexture.colorSpace=THREE.SRGBColorSpace;
- bannerTexture.anisotropy=mobile?2:4;
+ bannerTexture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
  const banner=new THREE.Mesh(new THREE.PlaneGeometry(bannerWidth,bannerHeight),new THREE.MeshBasicMaterial({map:bannerTexture,toneMapped:false}));
  banner.position.set(0,bannerY,backZ+.50);scene.add(banner);
  buildReception();buildDigitalExhibit();
@@ -346,12 +383,12 @@ function renderCatalog(){
 function setShade(){const show=catalogOpen||modalOpen||guestbookOpen||roomOpen;$('shade').hidden=!show;}
 function openCatalog(){if(modalOpen)return;closeRooms();catalogOpen=true;$('catalogDrawer').classList.add('open');$('catalogDrawer').setAttribute('aria-hidden','false');setShade()}
 function closeCatalog(){catalogOpen=false;$('catalogDrawer').classList.remove('open');$('catalogDrawer').setAttribute('aria-hidden','true');setShade()}
-function fitViewer(){if(!viewerRenderer||!$('productViewer').clientWidth)return;const el=$('productViewer');const w=el.clientWidth,h=el.clientHeight;viewerRenderer.setSize(w,h,false);viewerCamera.aspect=w/h;viewerCamera.updateProjectionMatrix()}
+function fitViewer(){if(!viewerRenderer||!$('productViewer').clientWidth)return;const el=$('productViewer');const w=el.clientWidth,h=el.clientHeight;viewerRenderer.setSize(w,h);viewerCamera.aspect=w/h;viewerCamera.updateProjectionMatrix()}
 function initViewer(){
  const el=$('productViewer');viewerScene=new THREE.Scene();viewerScene.background=new THREE.Color(0xd9d8c9);
  viewerCamera=new THREE.PerspectiveCamera(39,1,.05,100);viewerCamera.position.set(3.6,2.6,4.6);
  viewerRenderer=new THREE.WebGLRenderer({alpha:false,antialias:true,powerPreference:'default'});
- viewerRenderer.setPixelRatio(Math.min(window.devicePixelRatio,mobile?1.05:1.4));viewerRenderer.outputColorSpace=THREE.SRGBColorSpace;
+ viewerRenderer.setPixelRatio(renderDpr(true));viewerRenderer.outputColorSpace=THREE.SRGBColorSpace;
  viewerRenderer.toneMapping=THREE.ACESFilmicToneMapping;viewerRenderer.toneMappingExposure=1.65;
  el.append(viewerRenderer.domElement);
  viewerControl=new OrbitControls(viewerCamera,viewerRenderer.domElement);
@@ -575,10 +612,11 @@ function setupWalk(){
 const remoteAvatars=new Map();
 const avatarPalette=[0xe6b486,0x92ccd3,0xb6a8eb,0xd58eaa,0xa1d69c,0xeacc92];
 function avatarLabel(name){
- const c=document.createElement('canvas');c.width=320;c.height=80;
- const ctx=c.getContext('2d');ctx.fillStyle='rgba(20,30,33,.90)';ctx.roundRect(1,1,318,76,16);ctx.fill();
- ctx.fillStyle='#f6f1e5';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 25px Arial';ctx.fillText(String(name).slice(0,22),160,41,290);
+ const c=document.createElement('canvas');c.width=640;c.height=160;
+ const ctx=c.getContext('2d');ctx.fillStyle='rgba(20,30,33,.94)';ctx.beginPath();ctx.roundRect(2,2,636,152,32);ctx.fill();
+ ctx.fillStyle='#f6f1e5';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 50px Arial';ctx.fillText(String(name).slice(0,22),320,82,580);
  const tex=new THREE.CanvasTexture(c);tex.colorSpace=THREE.SRGBColorSpace;
+ tex.anisotropy=Math.min(8,renderer?.capabilities.getMaxAnisotropy()||8);
  const pane=new THREE.Mesh(new THREE.PlaneGeometry(1.35,.34),new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false}));pane.position.y=2.38;return pane;
 }
 function makeAvatar(visitor){
@@ -636,8 +674,8 @@ function animate(){
 }
 async function init(){
  try{
-  renderer=new THREE.WebGLRenderer({antialias:!mobile,powerPreference:mobile?'low-power':'default'});
-  renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1:1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;
+  renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+  renderer.setPixelRatio(renderDpr());renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.47;
   renderer.setSize(innerWidth,innerHeight);$('museumCanvas').append(renderer.domElement);
   clock=new THREE.Clock();camera=new THREE.PerspectiveCamera(mobile?75:68,innerWidth/innerHeight,.12,110);
@@ -649,7 +687,7 @@ async function init(){
   setEnvironment();resetCamera();buildStands();buildGuestbookStand();renderCatalog();setupWalk();animate();updateRoomIndicator();
   initShop({products:()=>products,openProduct,toast:showToast});initPresence();
   $('loadingScreen').remove();
-  window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);fitViewer()});
+  window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();applyGraphicsQuality()});
  }catch(e){console.error(e);$('loadingScreen').innerHTML='<div>3D müze açılamadı.</div><div style="font:12px Arial;color:#c6ad8e;letter-spacing:0">Tarayıcında WebGL desteğini ve internet bağlantını kontrol et.</div>'}
 }
 const bgMusic=$('classicalAmbience'),musicButton=$('toggleMusic');
@@ -674,4 +712,11 @@ for(const btn of document.querySelectorAll('[data-rating]'))btn.addEventListener
 $('productReviewForm').addEventListener('submit',submitProductReview);
 $('guestbookForm').addEventListener('submit',submitGuestbook);
 $('fullScreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{showToast('Tarayıcı tam ekranı desteklemiyor.')}});
+$('graphicsQuality').addEventListener('click',()=>{
+ graphicsQuality=graphicsQuality==='hd'?'ultra':graphicsQuality==='ultra'?'balanced':'hd';
+ try{localStorage.setItem(GRAPHICS_KEY,graphicsQuality)}catch{}
+ applyGraphicsQuality();
+ showToast(`Görüntü: ${GRAPHICS_PRESETS[graphicsQuality].name}${graphicsQuality==='ultra'?' · Yavaşlarsa Dengeli seçebilirsin.':''}`);
+});
+refreshQualityButton();
 init();
